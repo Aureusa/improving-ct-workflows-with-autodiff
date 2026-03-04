@@ -5,14 +5,14 @@ from ct_autodiff.utils.formating import box_text
 
 class Block(ABC):
     @abstractmethod
-    def __init__(self, name):
+    def __init__(self):
         """
         Initializes a block with a name and an empty parameter dictionary.
         
         :param name: A unique identifier for the block, used for referencing in workflows.
         :type name: str
         """
-        self.name = name
+        self.name = self.__class__.__name__
         self._params: dict[str, Parameter] = {}
 
     @abstractmethod

@@ -5,15 +5,15 @@ from ct_autodiff.utils.formating import box_text
 
 
 class Workflow(ABC):
-    def __init__(self, name):
+    def __init__(self):
         """
         Initializes a workflow with a name and an empty list of blocks.
         
         :param name: A unique identifier for the workflow.
         :type name: str
         """
-        self.name = name
-        self.blocks = []
+        self.name = self.__class__.__name__
+        self.blocks = {}
 
     def add_block(self, block: Block):
         """
@@ -30,7 +30,7 @@ class Workflow(ABC):
         """
         if not isinstance(block, Block):
             raise ValueError(f"All blocks must be of type Block, got {type(block)}")
-        self.blocks.append(block)
+        self.blocks[block.name] = block
 
     def run(self, input_data):
         """
@@ -43,7 +43,7 @@ class Workflow(ABC):
         :rtype: Any
         """
         out = input_data
-        for block in self.blocks:
+        for block in self.blocks.values():
             out = block.execute(out)
         return out
     
@@ -54,24 +54,24 @@ class Workflow(ABC):
         :return: An iterator over the parameters of all blocks.
         :rtype: Iterator
         """
-        for block in self.blocks:
+        for block in self.blocks.values():
             yield from block.parameters()
 
     def to(self, device):
         """Moves all blocks in the workflow to the specified device."""
-        for block in self.blocks:
+        for block in self.blocks.values():
             block.to(device)
         return self
     
     def __repr__(self):
-        return f"Workflow(name={self.name}, blocks={[b.name for b in self.blocks]})"
+        return f"Workflow(name={self.name}, blocks={[b.name for b in self.blocks.values()]})"
     
     def __str__(self):
         if not self.blocks:
             return f"{self.name}: <no blocks>"
 
         lines = [f"{self.name}:"]
-        for i, block in enumerate(self.blocks):
+        for i, block in enumerate(self.blocks.values()):
             lines.append(f"{block}")
             if i != len(self.blocks) - 1:
                 # This is just to make it look prety in a print statement,
