@@ -63,6 +63,20 @@ class Workflow(ABC):
             block.to(device)
         return self
     
+    def __getattr__(self, name):
+        """
+        Allows access to blocks as attributes.
+        
+        :param name: The name of the block to access.
+        :type name: str
+        :return: The block if it exists.
+        :rtype: Block
+        :raises AttributeError: If the parameter does not exist in the block.
+        """
+        if name in self.blocks:
+            return self.blocks[name]
+        raise AttributeError(f"{name} not found in blocks")
+    
     def __repr__(self):
         return f"Workflow(name={self.name}, blocks={[b.name for b in self.blocks.values()]})"
     
