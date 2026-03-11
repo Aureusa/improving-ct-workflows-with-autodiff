@@ -1,0 +1,6 @@
+plotly
+spekpy
+xraylib
+matplotlib
+numpy
+torch
