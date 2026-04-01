@@ -3,9 +3,8 @@ import xraylib
 import spekpy as sp
 # plotting and numpy
 import numpy as np
-import plotly.graph_objects as go
 import matplotlib.pyplot as plt
-from plotly.subplots import make_subplots
+from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
 #astra
 import astra
@@ -107,24 +106,15 @@ def render_phantom(
             z[::scatter_stride],
             vals[::scatter_stride],
         )
-        fig = go.Figure(
-            data=go.Scatter3d(
-                x=xs, y=ys, z=zs,
-                mode="markers",
-                marker=dict(size=marker_size, color=vs, opacity=marker_opacity),
-            )
-        )
-        fig.update_layout(
-            scene=dict(
-                xaxis=dict(showticklabels=False, title=""),
-                yaxis=dict(showticklabels=False, title=""),
-                zaxis=dict(showticklabels=False, title=""),
-            ),
-            margin=dict(l=0, r=0, t=0, b=0),
-            width=700,
-            height=700,
-        )
-        fig.show()
+        fig = plt.figure(figsize=(7, 7))
+        ax = fig.add_subplot(111, projection='3d')
+        sc = ax.scatter(xs, ys, zs, c=vs, s=marker_size, alpha=marker_opacity, cmap='viridis')
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.set_zticks([])
+        plt.tight_layout()
+        plt.savefig("3d_phantom.png", dpi=100)
+        plt.close()
 
     # Side projection (max along Y, Z is abscissa)
     if show_projection:
@@ -134,7 +124,8 @@ def render_phantom(
         plt.xlabel("Z")
         plt.ylabel("X")
         plt.title("Side projection")
-        plt.show()
+        plt.savefig("side_projection.png")
+        plt.close()
 
     return volume
 
@@ -225,43 +216,31 @@ def plot_sinogram(sinogram, title="Sinogram"):
     mid_row = n_rows // 2
     mid_angle = 90
 
-    fig = make_subplots(
-        rows=1, cols=3,
-        subplot_titles=[
-            f'Sinogram (row {mid_row})',
-            f'Projection at angle {mid_angle}',
-            'Line profile through center'
-        ]
-    )
+    fig, axes = plt.subplots(1, 3, figsize=(14, 4))
+    fig.suptitle(title)
 
     # Classic sinogram: one horizontal slice
-    fig.add_trace(
-        go.Heatmap(z=sinogram[mid_row], colorscale='gray', showscale=False),
-        row=1, col=1
-    )
-    fig.update_xaxes(title_text='Detector column', row=1, col=1)
-    fig.update_yaxes(title_text='Angle index', row=1, col=1)
+    axes[0].imshow(sinogram[mid_row], aspect='auto', cmap='gray')
+    axes[0].set_title(f'Sinogram (row {mid_row})')
+    axes[0].set_xlabel('Detector column')
+    axes[0].set_ylabel('Angle index')
 
     # What the detector sees at one angle
-    fig.add_trace(
-        go.Heatmap(z=sinogram[:, mid_angle, :], colorscale='gray', showscale=False),
-        row=1, col=2
-    )
-    fig.update_xaxes(title_text='Detector column', row=1, col=2)
-    fig.update_yaxes(title_text='Detector row', row=1, col=2)
+    axes[1].imshow(sinogram[:, mid_angle, :], aspect='auto', cmap='gray')
+    axes[1].set_title(f'Projection at angle {mid_angle}')
+    axes[1].set_xlabel('Detector column')
+    axes[1].set_ylabel('Detector row')
 
     # Line profile: one row of the sinogram at one angle
-    # This shows the attenuation profile — you should see higher peaks where Al is
     profile = sinogram[mid_row, mid_angle, :]
-    fig.add_trace(
-        go.Scatter(y=profile, mode='lines', name='Attenuation'),
-        row=1, col=3
-    )
-    fig.update_xaxes(title_text='Detector column', row=1, col=3)
-    fig.update_yaxes(title_text='Attenuation', row=1, col=3)
+    axes[2].plot(profile)
+    axes[2].set_title('Line profile through center')
+    axes[2].set_xlabel('Detector column')
+    axes[2].set_ylabel('Attenuation')
 
-    fig.update_layout(title=title, height=400, width=1400, showlegend=False)
-    fig.show()
+    plt.tight_layout()
+    plt.savefig("sinogram.png", dpi=100)
+    plt.close()
 
 """
 ---------------------------------------------------------------------------------------------------
@@ -275,16 +254,20 @@ def calculate_I(ray,mu_pmma,mu_aluminum,phantom,scale=0.1,add_gaussian_noise=0.0
     al_projection=astra_forward_project(al_part)
     fluence = ray.get_spk()
     I_total = 0
+
     for n,e in enumerate(fluence):
         I_0= e
-        p_pmma = pmma_projection * mu_pmma[n]*scale
-        p_al = al_projection * mu_aluminum[n]*scale
+        p_pmma = pmma_projection * mu_pmma[n] * scale
+        p_al = al_projection * mu_aluminum[n] * scale
         I_total += I_0 * np.exp(-(p_pmma + p_al))
-    #add noise after summing contributions for an energy
-        if add_gaussian_noise:
-            I_total += np.random.normal(0, add_gaussian_noise)
-    return p_al
 
+    # Add Gaussian noise to simulate measurement imperfections
+    noise = np.random.normal(0, add_gaussian_noise * np.max(I_total), size=I_total.shape)
+    I_total += noise
+
+    I0_total = np.sum(fluence)
+    rec = -np.log(I_total / I0_total)
+    return rec
 
 
 """
@@ -293,12 +276,13 @@ Back-projection using ASTRA toolbox, SIRT3D_CUDA algorithm.
 ---------------------------------------------------------------------------------------------------
 """
 
-def astra_back_projection(sinogram, N_ANGLES=360):
+def astra_back_projection(sinogram, n_angles=360):
     N = 128
-    angles = np.linspace(0, np.pi, N_ANGLES, endpoint=False)
+    angles = np.linspace(0, np.pi, n_angles, endpoint=False)
     proj_geom = astra.create_proj_geom('parallel3d', 1.0, 1.0, N, N, angles)
     vol_geom = astra.create_vol_geom(N, N, N)
     sino_id = astra.data3d.create('-proj3d', proj_geom, sinogram)
+
     # Calculate backprojection
     backprojection_id = astra.data3d.create('-vol', vol_geom)
     cfg = astra.astra_dict('SIRT3D_CUDA')
@@ -306,7 +290,7 @@ def astra_back_projection(sinogram, N_ANGLES=360):
     cfg['ReconstructionDataId'] = backprojection_id
     algorithm_id = astra.algorithm.create(cfg)
 
-    astra.algorithm.run(algorithm_id,iterations=    100)
+    astra.algorithm.run(algorithm_id,iterations=1000)
 
     backprojection = astra.data3d.get(backprojection_id)
     #backprojection   = np.transpose(backprojection, (1, 2, 0))
@@ -333,73 +317,44 @@ def plot_reconstruction(reconstruction, title="FBP Reconstruction"):
     mid = size // 2
 
     # 2D slices in all three directions
-    fig = make_subplots(
-        rows=1, cols=3,
-        subplot_titles=[
-            f'Axial (z={mid})',
-            f'Coronal (y={mid})',
-            f'Sagittal (x={mid})'
-        ]
-    )
-
-    fig.add_trace(
-        go.Heatmap(z=reconstruction[mid, :, :], colorscale='gray', showscale=False),
-        row=1, col=1
-    )
-    fig.add_trace(
-        go.Heatmap(z=reconstruction[:, mid, :], colorscale='gray', showscale=False),
-        row=1, col=2
-    )
-    fig.add_trace(
-        go.Heatmap(z=reconstruction[:, :, mid], colorscale='gray', showscale=True),
-        row=1, col=3
-    )
-
-    fig.update_layout(title=title, height=400, width=1400)
-    fig.show()
+    fig, axes = plt.subplots(1, 3, figsize=(14, 4))
+    fig.suptitle(title)
+    axes[0].imshow(reconstruction[mid, :, :], cmap='gray')
+    axes[0].set_title(f'Axial (z={mid})')
+    axes[1].imshow(reconstruction[:, mid, :], cmap='gray')
+    axes[1].set_title(f'Coronal (y={mid})')
+    im = axes[2].imshow(reconstruction[:, :, mid], cmap='gray')
+    axes[2].set_title(f'Sagittal (x={mid})')
+    plt.colorbar(im, ax=axes[2])
+    plt.tight_layout()
+    plt.savefig("reconstruction_slices.png", dpi=100)
+    plt.close()
 
     # 3D volume rendering — show voxels above a threshold
     threshold = (reconstruction.max() + reconstruction.min()) / 2
     x, y, z = np.where(reconstruction > threshold)
     vals = reconstruction[x, y, z]
-
-    fig3d = go.Figure(data=go.Scatter3d(
-        x=x[::5], y=y[::5], z=z[::5],
-        mode='markers',
-        marker=dict(
-            size=1.5,
-            color=vals[::5],
-            colorscale='gray',
-            opacity=0.3,
-            colorbar=dict(title='Attenuation')
-        )
-    ))
-    fig3d.update_layout(
-        title=f'{title} (3D)',
-        scene=dict(
-            xaxis=dict(showticklabels=False, title=''),
-            yaxis=dict(showticklabels=False, title=''),
-            zaxis=dict(showticklabels=False, title=''),
-        ),
-        width=700, height=700
-    )
-    fig3d.show()
+    fig3d = plt.figure(figsize=(7, 7))
+    ax3d = fig3d.add_subplot(111, projection='3d')
+    ax3d.scatter(x[::5], y[::5], z[::5], c=vals[::5], cmap='gray', s=1.5, alpha=0.3)
+    ax3d.set_xticks([])
+    ax3d.set_yticks([])
+    ax3d.set_zticks([])
+    ax3d.set_title(f'{title} (3D)')
+    plt.tight_layout()
+    plt.savefig("3d_reconstruction.png", dpi=100)
+    plt.close()
 
     # Line profile through center — this is where you see cupping
     profile = reconstruction[mid, mid, :]
-    fig_line = go.Figure(data=go.Scatter(
-        y=profile, mode='lines', name='Attenuation'
-    ))
-    fig_line.update_layout(
-        title='Line profile through center (look for cupping)',
-        xaxis_title='Pixel position',
-        yaxis_title='Reconstructed attenuation',
-        height=400, width=800
-    )
-    fig_line.show()
-
-
-
+    plt.figure(figsize=(8, 4))
+    plt.plot(profile)
+    plt.title('Line profile through center (look for cupping)')
+    plt.xlabel('Pixel position')
+    plt.ylabel('Reconstructed attenuation')
+    plt.tight_layout()
+    plt.savefig("line_profile.png", dpi=100)
+    plt.close()
 
 
 
@@ -414,7 +369,8 @@ def plot_reconstruction(reconstruction, title="FBP Reconstruction"):
 
 if __name__ == "__main__":
    # render_phantom()
-    r = sp.Spek(kvp=180, th=12)  # Generate a spectrum (120 kV, 12 degree tube angle)
+    # Work around SpekPy v2 + NumPy 2.x incompatibility in default physics path.
+    r = sp.Spek(kvp=180, th=12, physics="spekcalc")  # Generate a spectrum (120 kV, 12 degree tube angle)
 
     
     pmma_mu = generate_linear_attenuation_params(r, ("C5H8O2"))  # Get attenuation coefficients for PMMA
