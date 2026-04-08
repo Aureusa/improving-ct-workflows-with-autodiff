@@ -371,7 +371,6 @@ if __name__ == "__main__":
    # render_phantom()
     # Work around SpekPy v2 + NumPy 2.x incompatibility in default physics path.
     r = sp.Spek(kvp=180, th=12, physics="spekcalc")  # Generate a spectrum (120 kV, 12 degree tube angle)
-
     
     pmma_mu = generate_linear_attenuation_params(r, ("C5H8O2"))  # Get attenuation coefficients for PMMA
     al_mu = generate_linear_attenuation_params(r, "Al")  # Get attenuation coefficients for Aluminum

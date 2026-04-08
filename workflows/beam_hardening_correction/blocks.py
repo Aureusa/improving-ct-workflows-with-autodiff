@@ -25,7 +25,7 @@ class ProjectionData(Block):
         
         pmma_mu = generate_linear_attenuation_params(r, ("C5H8O2"))  # Get attenuation coefficients for PMMA
         al_mu = generate_linear_attenuation_params(r, "Al")  # Get attenuation coefficients for Aluminum
-        phantom=render_phantom(show_projection=False)
+        phantom = render_phantom(show_projection=False)
         
         sinogram = calculate_I(r, pmma_mu, al_mu, phantom, scale=0.5 / 128, add_gaussian_noise=0.02)
         return sinogram
