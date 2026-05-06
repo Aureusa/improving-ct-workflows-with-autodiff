@@ -24,13 +24,13 @@ class ProjectionData(Block):
 
     def execute(self):
         # Work around SpekPy v2 + NumPy 2.x incompatibility in default physics path.
-        r = sp.Spek(kvp=120, th=12, physics="spekcalc")  # Generate a spectrum (120 kV, 12 degree tube angle)
+        r = sp.Spek(kvp=180, th=12, physics="spekcalc")  # Generate a spectrum (180 kV, 12 degree tube angle)
         
         pmma_mu = generate_linear_attenuation_params(r, ("C5H8O2"))  # Get attenuation coefficients for PMMA
         al_mu = generate_linear_attenuation_params(r, "Al")  # Get attenuation coefficients for Aluminum
         phantom = render_phantom(show_projection=False)
         
-        sinogram = calculate_I(r, pmma_mu, al_mu, phantom, scale=0.5 / 128, add_gaussian_noise=0.02)
+        sinogram = calculate_I(r, pmma_mu, al_mu, phantom, scale=0.5 / 128, add_gaussian_noise=0.00)
         return sinogram
 
 ###############################################
@@ -47,9 +47,7 @@ class Reconstruct(Block):
         # Placeholder for the actual reconstruction logic
         # This should implement the beam hardening correction algorithm
         reconstruction = astra_back_projection(sinogram=sinogram, n_angles=self.n_angles)
-        
-        # Move to torch tensor for further processing in the workflow
-        return torch.from_numpy(reconstruction).float().to(self._device)
+        return reconstruction
 
 class CorrectProjection(Block):
     def __init__(self, device: str = "cuda" if torch.cuda.is_available() else "cpu"):
@@ -57,10 +55,9 @@ class CorrectProjection(Block):
         self._device = device
     
     def execute(self, projection_data):
-        # The projection_data is expected to be (n_angles, n_pixels, n_pixels) tensor
-        # We permute so that we get (n_pixels, n_angles, n_pixels) for astra
-        projection_data = projection_data.permute(1, 0, 2).cpu().numpy() # (n_pixels, n_angles, n_pixels)
-        return projection_data
+        # Detach, move to cpu and convert to numpy
+        projection_data_np = projection_data.detach().cpu().numpy()
+        return projection_data_np
 
 
 ###############################################
@@ -68,7 +65,7 @@ class CorrectProjection(Block):
 ###############################################
 
 class SpectralProjection(Block, ISP):
-    def __init__(self, n_angles=360, number_of_materials=2, gamma=1.0, energy_bins=358, device: str = "cuda" if torch.cuda.is_available() else "cpu"):
+    def __init__(self, n_angles=360, number_of_materials=2, gamma=1.0, energy_bins=358, voxel_size=0.5/128, device: str = "cuda" if torch.cuda.is_available() else "cpu"):
         Block.__init__(self)
         ISP.__init__(
             self,
@@ -76,13 +73,21 @@ class SpectralProjection(Block, ISP):
             number_of_materials=number_of_materials,
             gamma=gamma,
             energy_bins=energy_bins,
+            voxel_size=voxel_size,
             device=device
         )
         self.add_param(self.I, "I", trainable=True)
         self.add_param(self.mu, "mu", trainable=True)
-        self.add_param(self.t, "t", trainable=True)
+        # self.add_param(self.t, "t", trainable=True)
         self.add_param(self.gamma, "gamma", trainable=False)
         self._device = device
 
     def execute(self, reconstruction):
         return self.forward(reconstruction)
+    
+    def _s(self, x):
+        s = ISP._s(self, x)
+        if not self._t_initialized:
+            self.add_param(self.t, "t", trainable=True)
+            self._t_initialized = True
+        return s

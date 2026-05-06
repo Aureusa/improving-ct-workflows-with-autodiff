@@ -43,8 +43,16 @@ class Block(ABC):
         :rtype: torch.Tensor
         :raises AttributeError: If the parameter does not exist in the block.
         """
-        if name in self._params:
-            return self._params[name].tensor
+        params = self.__dict__.get("_params", {})
+        if name in params:
+            return params[name].tensor
+
+        # Delegate to the next class in MRO when mixing Block with classes
+        # that implement their own attribute lookup (e.g., torch.nn.Module).
+        parent_getattr = getattr(super(), "__getattr__", None)
+        if parent_getattr is not None:
+            return parent_getattr(name)
+
         raise AttributeError(f"{name} not found in parameters")
 
     def parameters(self):
@@ -52,9 +60,9 @@ class Block(ABC):
         Yields the tensors of all trainable parameters in the block.
         This is to be compatible with optimizers that expect an iterable of tensors.
         """
-        for p in self._params.values():
+        for p_name, p in self._params.items():
             if p.trainable:
-                yield p.tensor
+                yield (p_name, p.tensor)
 
     def to(self, device):
         """Moves all parameters in the block to the specified device."""

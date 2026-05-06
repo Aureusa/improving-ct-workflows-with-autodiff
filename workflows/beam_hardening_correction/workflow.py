@@ -33,7 +33,8 @@ class BeamHardeningCorrectionWorkflow(Workflow):
         self._optim_steps = optim_steps
         self._loss_fn = PhiLoss()
 
-        self._optim = torch.optim.Adam(self.parameters(), lr=lr)
+        self._lr = lr
+        self._optim = torch.optim.Adam([p for _, p in self.parameters()], lr=lr)
 
         self._device = device
         self.to(self._device)
@@ -49,28 +50,39 @@ class BeamHardeningCorrectionWorkflow(Workflow):
         :rtype: Any
         """
         input_data = self.ProjectionData.execute()
-        reconstruct_output = self.Reconstruct.execute(input_data)
+        measured_projection = torch.from_numpy(input_data).float().to(self._device)
+        original_reconstruction = self.Reconstruct.execute(input_data)
+
+        # Convert original_reconstruction to torch tensor for optimization
+        original_reconstruction_tensor = torch.from_numpy(original_reconstruction).float().to(self._device)
         
         # Optimization loop
-        sim_data, history = self._optim_loop(input_data, reconstruct_output)
+        sim_data, history = self._optim_loop(measured_projection, original_reconstruction_tensor)
 
+        # Pass the simulated data through the CorrectProjection block to get it ready for reconstruction
         correct_projection = self.CorrectProjection.execute(sim_data)
 
         final_reconstruction = self.Reconstruct.execute(correct_projection)
-        return final_reconstruction, history
+        return original_reconstruction, final_reconstruction, history
             
     def _optim_loop(self, input_data, reconstructed_data):
         history = []
-        for _ in range(self._optim_steps):
-            A_sim = self.SpectralProjection.execute(reconstructed_data) # (n_angles, n_pixels, n_pixels)
-            A_meas = input_data # (n_angles, n_pixels, n_pixels)
+        A_meas = input_data # (n_angles, n_pixels, n_pixels)
 
+        # Warmup forward pass: triggers Otsu initialization of t so it is added
+        # to _params before the optimizer is (re)built.
+        with torch.no_grad():
+            self.SpectralProjection.execute(reconstructed_data)
+        self._optim = torch.optim.Adam([p for _, p in self.parameters()], lr=self._lr)
+
+        for _ in tqdm(range(self._optim_steps), desc="Optimizing Spectral Projection"):
+            A_sim = self.SpectralProjection.execute(reconstructed_data) # (n_pixels, n_angles, n_pixels)
             loss = self._loss_fn(A_sim, A_meas)
 
             # Step
             self._optim.zero_grad()
             loss.backward()
-            self._optim.step()
+            self._optim.step()            
 
             history.append(loss.item())
         return A_sim, history

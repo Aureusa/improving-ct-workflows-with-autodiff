@@ -8,6 +8,7 @@ from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
 #astra
 import astra
+import torch
 
 
 def render_phantom(
@@ -144,6 +145,9 @@ def generate_mu_vlaues(ray, compound):
     for e in bins:
         mu=xraylib.CS_Total_CP(compound, e)
         mu_values.append(mu)
+
+    # Save bins
+    np.save("energy_bins.npy", bins)
     return mu_values
     
 def generate_linear_attenuation_params(ray, compound):
@@ -209,6 +213,66 @@ def astra_forward_project(volume, n_angles=360):
     astra.data3d.delete(proj_id)
     
     return projection 
+
+
+def _astra_back_project(grad_proj_np, vol_shape, n_angles):
+    """ASTRA 3D back-projection (adjoint of forward projection)."""
+    size = vol_shape[0]
+    angles = np.linspace(0, np.pi, n_angles, endpoint=False)
+    vol_geom = astra.create_vol_geom(size, size, size)
+    proj_geom = astra.create_proj_geom('parallel3d', 1.0, 1.0, size, size, angles)
+
+    proj_id = astra.data3d.create('-proj3d', proj_geom, grad_proj_np.astype(np.float32))
+    vol_id = astra.data3d.create('-vol', vol_geom)
+
+    cfg = astra.astra_dict('BP3D_CUDA')
+    cfg['ProjectionDataId'] = proj_id
+    cfg['ReconstructionDataId'] = vol_id
+    algorithm_id = astra.algorithm.create(cfg)
+    astra.algorithm.run(algorithm_id)
+
+    vol_grad = astra.data3d.get(vol_id)
+
+    astra.algorithm.delete(algorithm_id)
+    astra.data3d.delete(proj_id)
+    astra.data3d.delete(vol_id)
+
+    return vol_grad.astype(np.float32)
+
+
+class _AstraFP3DFunction(torch.autograd.Function):
+    """
+    Differentiable wrapper around ASTRA's 3-D parallel-beam forward projector.
+    Forward  : FP3D_CUDA  (volume -> sinogram)
+    Backward : BP3D_CUDA  (adjoint; sinogram-grad -> volume-grad)
+    """
+
+    @staticmethod
+    def forward(ctx, volume_tensor, n_angles):
+        vol_np = volume_tensor.detach().cpu().numpy()
+        proj_np = astra_forward_project(vol_np, n_angles)
+        ctx.save_for_backward(volume_tensor)
+        ctx.n_angles = n_angles
+        ctx.vol_shape = vol_np.shape
+        return torch.from_numpy(proj_np).to(device=volume_tensor.device, dtype=volume_tensor.dtype)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        n_angles = ctx.n_angles
+        vol_shape = ctx.vol_shape
+        grad_np = grad_output.detach().cpu().numpy()
+        vol_grad_np = _astra_back_project(grad_np, vol_shape, n_angles)
+        vol_grad = torch.from_numpy(vol_grad_np).to(device=grad_output.device, dtype=grad_output.dtype)
+        return vol_grad, None  # None for n_angles (not a tensor)
+
+
+def astra_forward_project_differentiable(volume_tensor, n_angles=360):
+    """
+    Differentiable 3-D forward projection.
+    Accepts a torch.Tensor volume and returns a torch.Tensor sinogram,
+    with gradients flowing back through ASTRA's back-projector.
+    """
+    return _AstraFP3DFunction.apply(volume_tensor, n_angles)
 
 
 def plot_sinogram(sinogram, title="Sinogram"):
@@ -374,6 +438,11 @@ if __name__ == "__main__":
     
     pmma_mu = generate_linear_attenuation_params(r, ("C5H8O2"))  # Get attenuation coefficients for PMMA
     al_mu = generate_linear_attenuation_params(r, "Al")  # Get attenuation coefficients for Aluminum
+
+    # stack into 2d array for easier handling
+    mu_values = np.stack([pmma_mu, al_mu], axis=0) # shape (2, energy_bins)
+    np.save("mu_values.npy", mu_values)
+
     phantom=render_phantom(show_projection=False)
 
     pmma_mask = de_bone(phantom, "pmma")    

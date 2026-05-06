@@ -12,5 +12,5 @@ def tanh_thresholding(x, t, gamma):
     Returns:
         torch.Tensor: Thresholded tensor with values between 0 and 1.
     """
-    angle = gamma * ((x - t) / t)
+    angle = gamma * (x - t)
     return 0.5 * (1 + torch.tanh(angle))
