@@ -15,11 +15,16 @@ class BeamHardeningCorrectionWorkflow(Workflow):
             n_angles=360,
             number_of_materials=2,
             energy_bins=358,
-            gamma=1.0,
+            gamma=100,
             device: str = "cuda" if torch.cuda.is_available() else "cpu"
         ):
         super().__init__()
         self.add_block(ProjectionData())
+        # Execute the ProjectionData block to get the initial input data for the workflow
+        # Also stores the initial energy bins and mu values as .npy files for use in the ISP block
+        # as initial guesses for the optimization.
+        self._input_data = self.ProjectionData.execute()
+
         self.add_block(Reconstruct(n_angles=n_angles, device=device))
         self.add_block(CorrectProjection(device=device))
         self.add_block(SpectralProjection(
@@ -49,25 +54,29 @@ class BeamHardeningCorrectionWorkflow(Workflow):
                  all blocks.
         :rtype: Any
         """
-        input_data = self.ProjectionData.execute()
+        input_data = self._input_data
         measured_projection = torch.from_numpy(input_data).float().to(self._device)
         original_reconstruction = self.Reconstruct.execute(input_data)
 
         # Convert original_reconstruction to torch tensor for optimization
         original_reconstruction_tensor = torch.from_numpy(original_reconstruction).float().to(self._device)
         
-        # Optimization loop
-        sim_data, history = self._optim_loop(measured_projection, original_reconstruction_tensor)
+        # Optimization loop — fits ISP parameters so the model matches the measured sinogram
+        history = self._optim_loop(measured_projection, original_reconstruction_tensor)
 
-        # Pass the simulated data through the CorrectProjection block to get it ready for reconstruction
-        correct_projection = self.CorrectProjection.execute(sim_data)
+        # After optimisation, compute a monochromatic-equivalent sinogram using the
+        # learned material decomposition.  Reconstructing from this removes beam hardening.
+        mono_sinogram = self.SpectralProjection.compute_monochromatic_sinogram(
+            original_reconstruction_tensor
+        )
+        correct_projection = self.CorrectProjection.execute(mono_sinogram)
 
         final_reconstruction = self.Reconstruct.execute(correct_projection)
         return original_reconstruction, final_reconstruction, history
             
     def _optim_loop(self, input_data, reconstructed_data):
         history = []
-        A_meas = input_data # (n_angles, n_pixels, n_pixels)
+        A_meas = input_data # (n_pixels, n_angles, n_pixels)  — ASTRA parallel3d layout
 
         # Warmup forward pass: triggers Otsu initialization of t so it is added
         # to _params before the optimizer is (re)built.
@@ -82,7 +91,7 @@ class BeamHardeningCorrectionWorkflow(Workflow):
             # Step
             self._optim.zero_grad()
             loss.backward()
-            self._optim.step()            
+            self._optim.step()
 
             history.append(loss.item())
-        return A_sim, history
+        return history

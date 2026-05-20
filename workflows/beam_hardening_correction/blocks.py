@@ -19,18 +19,34 @@ from .isp import ISP
 #               Input blocks                  #
 ##############################################
 class ProjectionData(Block):
-    def __init__(self):
+    def __init__(self, kvp=180, th=12, dk=50, physics="spekcalc"):
         super().__init__()
+        self.kvp = kvp
+        self.th = th
+        self.dk = dk
+        self.physics = physics
 
     def execute(self):
         # Work around SpekPy v2 + NumPy 2.x incompatibility in default physics path.
-        r = sp.Spek(kvp=180, th=12, physics="spekcalc")  # Generate a spectrum (180 kV, 12 degree tube angle)
+        r = sp.Spek(kvp=self.kvp, th=self.th, dk=self.dk, physics=self.physics)  # Generate a spectrum (180 kV, 12 degree tube angle)
         
         pmma_mu = generate_linear_attenuation_params(r, ("C5H8O2"))  # Get attenuation coefficients for PMMA
         al_mu = generate_linear_attenuation_params(r, "Al")  # Get attenuation coefficients for Aluminum
         phantom = render_phantom(show_projection=False)
         
         sinogram = calculate_I(r, pmma_mu, al_mu, phantom, scale=0.5 / 128, add_gaussian_noise=0.00)
+
+        # Saving
+        e_bins = r.get_k()
+        np.save("/home/s4861264/CIT_project/workflows/beam_hardening_correction/energy_bins.npy", e_bins)
+
+        # Save spectral fluence (photons per bin) — used to initialise ISP._I
+        fluence = r.get_spk()
+        np.save("/home/s4861264/CIT_project/workflows/beam_hardening_correction/fluence.npy", fluence)
+
+        # stack into 2d array for easier handling
+        mu_values = np.stack([pmma_mu, al_mu], axis=0) # shape (2, energy_bins)
+        np.save("/home/s4861264/CIT_project/workflows/beam_hardening_correction/mu_values.npy", mu_values)
         return sinogram
 
 ###############################################
@@ -65,7 +81,7 @@ class CorrectProjection(Block):
 ###############################################
 
 class SpectralProjection(Block, ISP):
-    def __init__(self, n_angles=360, number_of_materials=2, gamma=1.0, energy_bins=358, voxel_size=0.5/128, device: str = "cuda" if torch.cuda.is_available() else "cpu"):
+    def __init__(self, n_angles=360, number_of_materials=2, gamma=1.0, energy_bins=3, voxel_size=0.5/128, device: str = "cuda" if torch.cuda.is_available() else "cpu"):
         Block.__init__(self)
         ISP.__init__(
             self,
@@ -76,10 +92,13 @@ class SpectralProjection(Block, ISP):
             voxel_size=voxel_size,
             device=device
         )
-        self.add_param(self.I, "I", trainable=True)
-        self.add_param(self.mu, "mu", trainable=True)
+        self.add_param(self._I, "I", trainable=True)
+        self.add_param(self._mu, "mu", trainable=True)
         # self.add_param(self.t, "t", trainable=True)
-        self.add_param(self.gamma, "gamma", trainable=False)
+        self.add_param(self._gamma, "gamma", trainable=False)
+        self._params["I"].to(device)
+        self._params["mu"].to(device)
+        self._params["gamma"].to(device)
         self._device = device
 
     def execute(self, reconstruction):
@@ -88,6 +107,7 @@ class SpectralProjection(Block, ISP):
     def _s(self, x):
         s = ISP._s(self, x)
         if not self._t_initialized:
-            self.add_param(self.t, "t", trainable=True)
+            self.add_param(self._t, "t", trainable=True)
+            self._params["t"].to(self._device)
             self._t_initialized = True
         return s

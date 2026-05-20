@@ -19,18 +19,18 @@ class ISP(torch.nn.Module):
 
         self._t_initialized = False
 
-        energy_bins_vals = np.load("/home/s4861264/CIT_project/workflows/beam_hardening_correction/energy_bins.npy")
+        fluence_vals = np.load("/home/s4861264/CIT_project/workflows/beam_hardening_correction/fluence.npy")
         mu_vals = np.load("/home/s4861264/CIT_project/workflows/beam_hardening_correction/mu_values.npy")
 
         if mu_vals.shape != (number_of_materials, energy_bins):
             raise ValueError(f"mu_values.npy has shape {mu_vals.shape}, but expected ({number_of_materials}, {energy_bins})")
-        if energy_bins_vals.shape != (energy_bins,):
-            raise ValueError(f"energy_bins.npy has shape {energy_bins_vals.shape}, but expected ({energy_bins},)")
+        if fluence_vals.shape != (energy_bins,):
+            raise ValueError(f"fluence.npy has shape {fluence_vals.shape}, but expected ({energy_bins},)")
         
-        self.I = torch.nn.Parameter(torch.from_numpy(np.array(energy_bins_vals)).float(), requires_grad=True) # (energy_bins,)
-        self.mu = torch.nn.Parameter(torch.from_numpy(mu_vals).float(), requires_grad=True) # (number_of_materials, energy_bins)
-        self.t = torch.nn.Parameter(torch.rand(self.number_of_materials), requires_grad=True) # (number_of_materials,)
-        self.gamma = torch.nn.Parameter(torch.tensor(gamma), requires_grad=False) # (1,)
+        self._I = torch.nn.Parameter(torch.from_numpy(np.array(fluence_vals)).float(), requires_grad=True) # (energy_bins,) — spectral photon fluence
+        self._mu = torch.nn.Parameter(torch.from_numpy(mu_vals).float(), requires_grad=True) # (number_of_materials, energy_bins)
+        self._t = torch.nn.Parameter(torch.rand(self.number_of_materials), requires_grad=True) # (number_of_materials,)
+        self._gamma = torch.nn.Parameter(torch.tensor(gamma), requires_grad=False) # (1,)
 
     def forward(self, reconstruction):
         # Ensure reconstruction is on the same device as the parameters
@@ -66,37 +66,60 @@ class ISP(torch.nn.Module):
         l_list = []
         for n in range(self.number_of_materials):
             l_n = astra_forward_project_differentiable(s[n], self.n_angles) # (n_pixels, n_angles, n_pixels)
-
-            # Reshape l_n to (n_angles, n_pixels, n_pixels)
-            l_n = l_n.reshape(
-                self.n_angles,
-                reconstruction.shape[1],
-                reconstruction.shape[2]
-            ) # (n_angles, n_pixels, n_pixels)
             l_list.append(l_n)
 
-        l = torch.stack(l_list, dim=0) # (number_of_materials, n_angles, n_pixels, n_pixels)
+        l = torch.stack(l_list, dim=0) # (number_of_materials, n_pixels, n_angles, n_pixels)
 
         # Scale As_n from voxel counts to physical path length (matching calculate_I's scale)
-        As_n = l * self.voxel_size # (number_of_materials, n_angles, n_pixels, n_pixels)
+        As_n = l * self.voxel_size # (number_of_materials, n_pixels, n_angles, n_pixels)
 
         # Compute the energy contribution in chunks so we do not materialize the
-        # full (energy_bins, number_of_materials, n_angles, n_pixels, n_pixels)
+        # full (energy_bins, number_of_materials, n_pixels, n_angles, n_pixels)
         # broadcasted tensor on the GPU.
         mu = self.mu.permute(1, 0).to(self._device) # (energy_bins, number_of_materials)
         I = self.I.to(self._device) # (energy_bins,)
-        I_sim = torch.zeros_like(As_n[0]) # (n_angles, n_pixels, n_pixels)
+        I_sim = torch.zeros_like(As_n[0]) # (n_pixels, n_angles, n_pixels)
 
         for start in range(0, self.energy_bins, self.energy_chunk_size):
             end = min(start + self.energy_chunk_size, self.energy_bins)
             mu_chunk = mu[start:end] # (chunk, number_of_materials)
-            exponent_chunk = torch.einsum('em,mabp->eabp', mu_chunk, As_n)
+            exponent_chunk = torch.einsum('em,mrap->erap', mu_chunk, As_n)
             intensity_chunk = I[start:end].view(-1, 1, 1, 1) * torch.exp(-exponent_chunk)
             I_sim = I_sim + intensity_chunk.sum(dim=0)
-
-        # Reshape I_sim back to (n_pixels, n_angles, n_pixels)
-        I_sim = I_sim.permute(1, 0, 2) # (n_pixels, n_angles, n_pixels)
         return I_sim
+
+    def compute_monochromatic_sinogram(self, reconstruction):
+        """
+        After optimisation, produce a beam-hardening-free sinogram by replacing
+        the polychromatic sum with a single fluence-weighted effective mu per material:
+
+            mu_eff[n] = sum_e(I_e * mu[n,e]) / sum_e(I_e)
+            A_mono = sum_n( mu_eff[n] * As_n )
+
+        This is the sinogram that a monochromatic source at the effective energy
+        would produce, so reconstructing from it removes beam-hardening artefacts.
+        """
+        with torch.no_grad():
+            reconstruction = reconstruction.to(self._device)
+            s = self._s(reconstruction)  # (number_of_materials, n_pixels, n_pixels, n_pixels)
+
+            l_list = []
+            for n in range(self.number_of_materials):
+                l_n = astra_forward_project_differentiable(s[n], self.n_angles)  # (n_pixels, n_angles, n_pixels)
+                l_list.append(l_n)
+
+            l = torch.stack(l_list, dim=0)  # (number_of_materials, n_pixels, n_angles, n_pixels)
+            As_n = l * self.voxel_size      # (number_of_materials, n_pixels, n_angles, n_pixels)
+
+            # Fluence-weighted effective mu: (number_of_materials,)
+            I = self.I.to(self._device)     # (energy_bins,)
+            I_sum = I.sum().clamp_min(1e-8)
+            mu_eff = (self.mu.to(self._device) * I.unsqueeze(0)).sum(dim=1) / I_sum
+
+            # A_mono[r,a,p] = sum_n( mu_eff[n] * As_n[n,r,a,p] )
+            A_mono = torch.einsum('m,mrap->rap', mu_eff, As_n)  # (n_pixels, n_angles, n_pixels)
+
+        return A_mono
 
     def _s(self, x):
         """
@@ -109,9 +132,12 @@ class ISP(torch.nn.Module):
             thresholds = threshold_multiotsu(x.cpu().detach().numpy(),
                                          classes=self.number_of_materials+1,
                                          nbins=128)
-            self.t = torch.nn.Parameter(torch.tensor(thresholds, device=self._device, dtype=x.dtype), requires_grad=True)
+            self._t = torch.nn.Parameter(torch.tensor(thresholds, device=self._device, dtype=x.dtype), requires_grad=True)
+            t = self._t
+        else:
+            t = self.t
         # We need broadcasting to apply the tanh_thresholding function to each material separately
-        t = self.t.unsqueeze(0).unsqueeze(0).unsqueeze(0) # (1, 1, 1, number_of_materials)
+        t = t.unsqueeze(0).unsqueeze(0).unsqueeze(0) # (1, 1, 1, number_of_materials)
         t = t.reshape(self.number_of_materials, 1, 1, 1) # (number_of_materials, 1, 1, 1)
         t = t.expand(t.shape[0], x.shape[0], x.shape[1], x.shape[2]) # (number_of_materials, n_pixels, n_pixels, n_pixels)
         return tanh_thresholding(x, t, self.gamma) # (number_of_materials, n_pixels, n_pixels, n_pixels)

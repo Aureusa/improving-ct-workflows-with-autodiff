@@ -145,9 +145,6 @@ def generate_mu_vlaues(ray, compound):
     for e in bins:
         mu=xraylib.CS_Total_CP(compound, e)
         mu_values.append(mu)
-
-    # Save bins
-    np.save("energy_bins.npy", bins)
     return mu_values
     
 def generate_linear_attenuation_params(ray, compound):
