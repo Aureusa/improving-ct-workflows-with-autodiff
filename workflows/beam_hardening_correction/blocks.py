@@ -105,9 +105,4 @@ class SpectralProjection(Block, ISP):
         return self.forward(reconstruction)
     
     def _s(self, x):
-        s = ISP._s(self, x)
-        if not self._t_initialized:
-            self.add_param(self._t, "t", trainable=True)
-            self._params["t"].to(self._device)
-            self._t_initialized = True
-        return s
+        return ISP._s(self, x)

@@ -133,12 +133,20 @@ class ISP(torch.nn.Module):
                                          classes=self.number_of_materials+1,
                                          nbins=128)
             self._t = torch.nn.Parameter(torch.tensor(thresholds, device=self._device, dtype=x.dtype), requires_grad=True)
-            t = self._t
+            self.add_param(self._t, "t", trainable=True)
+            self._t_initialized = True
+            t = self.t  # _params["t"].tensor — tracked by optimizer
         else:
-            t = self.t
+            t = self.t  # _params["t"].tensor — updated by optimizer
         # We need broadcasting to apply the tanh_thresholding function to each material separately
         t = t.unsqueeze(0).unsqueeze(0).unsqueeze(0) # (1, 1, 1, number_of_materials)
         t = t.reshape(self.number_of_materials, 1, 1, 1) # (number_of_materials, 1, 1, 1)
         t = t.expand(t.shape[0], x.shape[0], x.shape[1], x.shape[2]) # (number_of_materials, n_pixels, n_pixels, n_pixels)
-        return tanh_thresholding(x, t, self.gamma) # (number_of_materials, n_pixels, n_pixels, n_pixels)
+        # Cumulative sigmoids: s_cum[n] = sigmoid(gamma*(x - t[n]))
+        s_cum = tanh_thresholding(x, t, self.gamma) # (number_of_materials, n_pixels, n_pixels, n_pixels)
+        # Convert to exclusive indicators: s[n] = s_cum[n] - s_cum[n+1]  (last stays)
+        # This gives s[n] ≈ 1 only where t[n] <= x < t[n+1], matching the paper's
+        # exclusive material indicator and keeping mu initialisation consistent.
+        s = torch.cat([s_cum[:-1] - s_cum[1:], s_cum[-1:]], dim=0)
+        return s
         
