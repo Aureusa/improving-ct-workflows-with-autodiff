@@ -1,3 +1,5 @@
+import os
+
 import torch
 
 from ct_autodiff.engine.block import Block
@@ -14,6 +16,8 @@ import astra
 
 from .barba_3D_phantom_1 import render_phantom, generate_linear_attenuation_params, calculate_I, de_bone, astra_back_projection, astra_forward_project
 from .isp import ISP
+
+_DATA_DIR = os.path.dirname(os.path.abspath(__file__))
 
 ###############################################
 #               Input blocks                  #
@@ -38,15 +42,15 @@ class ProjectionData(Block):
 
         # Saving
         e_bins = r.get_k()
-        np.save("/home/s4861264/CIT_project/workflows/beam_hardening_correction/energy_bins.npy", e_bins)
+        np.save(os.path.join(_DATA_DIR, "energy_bins.npy"), e_bins)
 
         # Save spectral fluence (photons per bin) — used to initialise ISP._I
         fluence = r.get_spk()
-        np.save("/home/s4861264/CIT_project/workflows/beam_hardening_correction/fluence.npy", fluence)
+        np.save(os.path.join(_DATA_DIR, "fluence.npy"), fluence)
 
         # stack into 2d array for easier handling
         mu_values = np.stack([pmma_mu, al_mu], axis=0) # shape (2, energy_bins)
-        np.save("/home/s4861264/CIT_project/workflows/beam_hardening_correction/mu_values.npy", mu_values)
+        np.save(os.path.join(_DATA_DIR, "mu_values.npy"), mu_values)
         return sinogram
 
 ###############################################

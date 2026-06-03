@@ -65,6 +65,7 @@ class BeamHardeningCorrectionWorkflow2D(Workflow):
         gamma: float = 100.0,
         size: int = 256,
         scale: float = 5.0 / 256,
+        outer_iters: int = 3,
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
     ):
         super().__init__()
@@ -100,14 +101,32 @@ class BeamHardeningCorrectionWorkflow2D(Workflow):
         self._optim_steps = optim_steps
         self._loss_fn     = PhiLoss()
         self._lr          = lr
+        self._outer_iters = outer_iters
         self._device      = device
 
         # Build initial optimizer (t is not yet in _params — added on first forward)
-        self._optim = torch.optim.Adam(
-            [p for _, p in self.parameters()], lr=lr
-        )
+        self._optim = self._build_optimizer()
 
         self.to(self._device)
+
+    def _build_optimizer(self):
+        """
+        Adam with per-parameter learning rates scaled by each parameter's own
+        magnitude, so every group takes ~`lr` *fractional* steps per iteration.
+
+        I (~1e5 photons), mu (~1 cm⁻¹) and t (~0.1-0.5 in normalised space) span
+        many orders of magnitude. A single absolute lr (Adam moves each param by
+        ≈lr/step) leaves I effectively frozen while t moves fine. Scaling each
+        group's lr by its mean magnitude makes the relative step size uniform.
+        """
+        groups = []
+        for name, p in self.parameters():
+            scale = float(p.detach().abs().mean().clamp_min(1e-8))
+            groups.append({"params": [p], "lr": self._lr * scale, "name": name})
+        if not groups:
+            # No trainable params registered yet (t added on first forward pass).
+            return torch.optim.Adam([torch.zeros(1, requires_grad=True)], lr=self._lr)
+        return torch.optim.Adam(groups)
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -122,26 +141,37 @@ class BeamHardeningCorrectionWorkflow2D(Workflow):
         final_reconstruction    : ndarray (n_pixels, n_pixels)
             FBP reconstruction from the corrected monochromatic sinogram.
         history                 : list[float]
-            Per-iteration loss values from the optimisation loop.
+            Per-iteration loss values, concatenated across all outer passes.
         """
         # Initial (uncorrected) reconstruction
         input_data  = self._input_data
         measured_projection = torch.from_numpy(input_data).float().to(self._device)
 
         original_reconstruction = self.Reconstruct2D.execute(input_data)
-        original_reconstruction_tensor = (
+        current_recon = (
             torch.from_numpy(original_reconstruction).float().to(self._device)
         )
 
-        # Optimise ISP2D to match the measured sinogram
-        history = self._optim_loop(measured_projection, original_reconstruction_tensor)
+        # ── Iterative correction ────────────────────────────────────────────────
+        # Each outer pass: fit ISP2D against A_meas using path lengths segmented
+        # from the *current* recon, synthesise a monochromatic sinogram, and
+        # reconstruct it. The corrected (de-cupped) recon then feeds the next
+        # pass, so the segmentation that drives the path lengths keeps improving
+        # instead of being frozen on the beam-hardened recon (single-pass).
+        history = []
+        final_reconstruction = original_reconstruction
+        for outer in range(self._outer_iters):
+            print(f"\n[outer {outer + 1}/{self._outer_iters}]")
+            history += self._optim_loop(measured_projection, current_recon)
 
-        # Synthesise beam-hardening-free sinogram with learned parameters
-        mono_sinogram    = self.SpectralProjection2D.compute_monochromatic_sinogram(
-            original_reconstruction_tensor
-        )
-        correct_np       = self.CorrectProjection.execute(mono_sinogram)
-        final_reconstruction = self.Reconstruct2D.execute(correct_np)
+            mono_sinogram = self.SpectralProjection2D.compute_monochromatic_sinogram(
+                current_recon
+            )
+            correct_np           = self.CorrectProjection.execute(mono_sinogram)
+            final_reconstruction = self.Reconstruct2D.execute(correct_np)
+            current_recon = (
+                torch.from_numpy(final_reconstruction).float().to(self._device)
+            )
 
         return original_reconstruction, final_reconstruction, history
 
@@ -160,9 +190,31 @@ class BeamHardeningCorrectionWorkflow2D(Workflow):
             self.SpectralProjection2D.execute(reconstructed_data)
 
         # Rebuild optimizer to include t now that it has been added
-        self._optim = torch.optim.Adam(
-            [p for _, p in self.parameters()], lr=self._lr
-        )
+        self._optim = self._build_optimizer()
+
+        # ── Diagnostic: tanh-threshold steepness in the normalised [0,1] space ──
+        # _s normalises the recon to [0,1] before thresholding, so the mask
+        # transition width is 1/gamma in that space. Compare it against the
+        # spacing between the (normalised) thresholds; if the width is wider the
+        # masks never become crisp and the forward model is mis-fit.
+        with torch.no_grad():
+            t_init    = torch.sort(self.SpectralProjection2D.t)[0]
+            gamma_val = float(self.SpectralProjection2D.gamma)
+            width     = 1.0 / max(gamma_val, 1e-12)
+            edges     = torch.cat(
+                [torch.zeros(1).to(t_init), t_init.flatten(), torch.ones(1).to(t_init)]
+            )
+            min_gap = float(torch.diff(edges).min())
+            print(
+                f"\n[diag] normalised thresholds {t_init.cpu().numpy().round(4)}; "
+                f"gamma {gamma_val:g} -> tanh transition width {width:.4g} (in [0,1] space)"
+            )
+            if width > min_gap:
+                print(
+                    f"[diag] WARNING: transition width ({width:.4g}) exceeds the smallest "
+                    f"threshold gap ({min_gap:.4g}); soft masks will be blurry. "
+                    f"Consider gamma >~ {5.0 / max(min_gap, 1e-12):.0f}."
+                )
 
         for _ in tqdm(
             range(self._optim_steps),

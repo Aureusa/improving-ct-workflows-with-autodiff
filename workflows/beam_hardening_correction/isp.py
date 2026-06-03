@@ -1,9 +1,13 @@
+import os
+
 import torch
 import numpy as np
 from skimage.filters import threshold_multiotsu
 
 from .utils import tanh_thresholding
 from .barba_3D_phantom_1 import astra_forward_project_differentiable
+
+_DATA_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 class ISP(torch.nn.Module):
@@ -19,8 +23,8 @@ class ISP(torch.nn.Module):
 
         self._t_initialized = False
 
-        fluence_vals = np.load("/home/s4861264/CIT_project/workflows/beam_hardening_correction/fluence.npy")
-        mu_vals = np.load("/home/s4861264/CIT_project/workflows/beam_hardening_correction/mu_values.npy")
+        fluence_vals = np.load(os.path.join(_DATA_DIR, "fluence.npy"))
+        mu_vals = np.load(os.path.join(_DATA_DIR, "mu_values.npy"))
 
         if mu_vals.shape != (number_of_materials, energy_bins):
             raise ValueError(f"mu_values.npy has shape {mu_vals.shape}, but expected ({number_of_materials}, {energy_bins})")

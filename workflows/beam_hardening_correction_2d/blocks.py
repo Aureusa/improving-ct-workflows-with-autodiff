@@ -47,12 +47,13 @@ class ProjectionData2D(Block):
         self,
         kvp: float = 120.0,
         th: float = 12.0,
-        dk: float = 50.0,
+        dk: float = 10.0,
         physics: str = "spekcalc",
         size: int = 256,
         scale: float = 5.0 / 256,
         add_gaussian_noise: float = 0.0,
         n_angles: int = 360,
+        noise_seed: int = 0,
     ):
         super().__init__()
         self.kvp               = kvp
@@ -63,6 +64,7 @@ class ProjectionData2D(Block):
         self.scale             = scale
         self.add_gaussian_noise = add_gaussian_noise
         self.n_angles          = n_angles
+        self.noise_seed        = noise_seed
 
     def execute(self) -> np.ndarray:
         """
@@ -83,6 +85,7 @@ class ProjectionData2D(Block):
             scale=self.scale,
             add_gaussian_noise=self.add_gaussian_noise,
             n_angles=self.n_angles,
+            seed=self.noise_seed,
         )
 
         # Persist for ISP2D.__init__

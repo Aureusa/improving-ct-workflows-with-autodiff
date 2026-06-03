@@ -200,10 +200,20 @@ class ISP2D(torch.nn.Module):
         s : float32 tensor (M, n_pixels, n_pixels)
             s[m] ≈ 1 where the voxel belongs to material m, with smooth transitions.
         """
+        # Normalise the reconstruction to [0,1] before thresholding so that gamma
+        # is decoupled from the physical recon scale (~0.005-0.02). On raw values
+        # gamma*(x-t) stays small and tanh never saturates → mushy masks. Working
+        # in [0,1] lets a fixed gamma produce crisp masks. The recon is a constant
+        # input (no grad through x), so its min/max are safe to use.
+        x_min = x.min()
+        x_max = x.max()
+        x_norm = (x - x_min) / (x_max - x_min).clamp_min(1e-8)
+
         if not self._t_initialized:
-            # Initialise thresholds from multi-Otsu segmentation of the reconstruction
+            # Initialise thresholds from multi-Otsu of the *normalised* recon, so
+            # the learnable thresholds live in the same [0,1] space as x_norm.
             thresholds = threshold_multiotsu(
-                x.cpu().detach().numpy(),
+                x_norm.cpu().detach().numpy(),
                 classes=self.number_of_materials + 1,
                 nbins=128,
             )
@@ -218,12 +228,18 @@ class ISP2D(torch.nn.Module):
         else:
             t = self.t
 
+        # Thresholds must stay ascending or the exclusive-mask subtraction
+        # (s_cum[:-1] - s_cum[1:]) below can go negative. Adam updates each t[m]
+        # independently and may reorder them, so sort every forward pass.
+        # torch.sort is differentiable (it just permutes the gradient).
+        t, _ = torch.sort(t)
+
         # Broadcast t : (M,) → (M, n_pixels, n_pixels)
         t = t.reshape(self.number_of_materials, 1, 1)
         t = t.expand(self.number_of_materials, x.shape[0], x.shape[1])
 
-        # s_cum[m] = σ( γ · (x − t[m]) )  — (M, n_pixels, n_pixels)
-        s_cum = tanh_thresholding(x, t, self.gamma)
+        # s_cum[m] = σ( γ · (x_norm − t[m]) )  — (M, n_pixels, n_pixels)
+        s_cum = tanh_thresholding(x_norm, t, self.gamma)
 
         # Convert cumulative to exclusive: s[m] = s_cum[m] − s_cum[m+1]
         s = torch.cat([s_cum[:-1] - s_cum[1:], s_cum[-1:]], dim=0)

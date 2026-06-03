@@ -303,6 +303,7 @@ def calculate_I_2d(
     scale: float = 5.0 / 256,
     add_gaussian_noise: float = 0.02,
     n_angles: int = 360,
+    seed: int = None,
 ) -> np.ndarray:
     """
     Simulate polychromatic CT measurements via Beer–Lambert law (2-D).
@@ -320,6 +321,7 @@ def calculate_I_2d(
     scale             : cm per voxel  (physical_width_cm / n_pixels)
     add_gaussian_noise: fractional Gaussian noise σ relative to max(I)
     n_angles          : number of projection angles
+    seed              : RNG seed for reproducible noise (None → nondeterministic)
 
     Returns
     -------
@@ -336,7 +338,8 @@ def calculate_I_2d(
         p = pmma_proj * mu_pmma[n] * scale + al_proj * mu_aluminum[n] * scale
         I_total += I0 * np.exp(-p)
 
-    noise   = np.random.normal(0, add_gaussian_noise * np.max(I_total), I_total.shape)
+    rng     = np.random.default_rng(seed)
+    noise   = rng.normal(0, add_gaussian_noise * np.max(I_total), I_total.shape)
     I_total = np.clip(I_total + noise, 1e-10, None)
 
     I0_total = float(np.sum(fluence))
