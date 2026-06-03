@@ -6,7 +6,7 @@ from workflows.beam_hardening_correction.plotting import plot_reconstruction
 
 if __name__ == "__main__":
     workflow = BeamHardeningCorrectionWorkflow(
-        optim_steps=100,
+        optim_steps=1000,
         energy_bins=3
     )
 
