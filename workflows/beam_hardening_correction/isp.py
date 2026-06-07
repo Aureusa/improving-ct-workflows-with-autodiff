@@ -55,77 +55,86 @@ class ISP(torch.nn.Module):
         A_sim = -torch.log(ratio) # (n_pixels, n_angles, n_pixels)
         return A_sim
 
-    def _compute_I_sim(self, reconstruction):
+    def _material_path_sinograms(self, reconstruction):
         """
-        I = sum_over_E_bins(
-          (I_e * exp(-sum_over_materials(mu_n * sum_over_pixels(s_n * reconstruction_pixel_value))))
-        )
+        Soft-segment the volume and forward-project each material mask to a
+        path-length sinogram.
 
-        reconstruction: (n_pixels, n_pixels, n_pixels) 3D volume
+        reconstruction : (n_pixels, n_pixels, n_pixels)
+        returns        : As_n (number_of_materials, n_pixels, n_angles, n_pixels) [cm]
         """
-        # Get s_n for each material n
-        s = self._s(reconstruction) # (number_of_materials, n_pixels, n_pixels, n_pixels)
-
-        # Forward project s_n to get the line integrals for each material n
-        # This will give us the line integrals for each material n along each ray in the sinogram
+        s = self._s(reconstruction)  # (M, n_pixels, n_pixels, n_pixels)
         l_list = []
         for n in range(self.number_of_materials):
-            l_n = astra_forward_project_differentiable(s[n], self.n_angles) # (n_pixels, n_angles, n_pixels)
+            l_n = astra_forward_project_differentiable(s[n], self.n_angles)  # (n_pixels, n_angles, n_pixels)
             l_list.append(l_n)
+        l = torch.stack(l_list, dim=0)  # (M, n_pixels, n_angles, n_pixels)
+        # Scale from voxel counts to physical path length (matching calculate_I's scale)
+        return l * self.voxel_size       # (M, n_pixels, n_angles, n_pixels) [cm]
 
-        l = torch.stack(l_list, dim=0) # (number_of_materials, n_pixels, n_angles, n_pixels)
+    def _I_sim_from_As(self, As_n):
+        """
+        Polychromatic intensity Σ_e I_e·exp(−Σ_m μ(e,m)·As_n[m]) from precomputed
+        material path sinograms, summed in energy chunks to avoid materialising the
+        full (E, M, n_pixels, n_angles, n_pixels) tensor.
 
-        # Scale As_n from voxel counts to physical path length (matching calculate_I's scale)
-        As_n = l * self.voxel_size # (number_of_materials, n_pixels, n_angles, n_pixels)
-
-        # Compute the energy contribution in chunks so we do not materialize the
-        # full (energy_bins, number_of_materials, n_pixels, n_angles, n_pixels)
-        # broadcasted tensor on the GPU.
-        mu = self.mu.permute(1, 0).to(self._device) # (energy_bins, number_of_materials)
-        I = self.I.to(self._device) # (energy_bins,)
-        I_sim = torch.zeros_like(As_n[0]) # (n_pixels, n_angles, n_pixels)
+        As_n : (M, n_pixels, n_angles, n_pixels)  →  (n_pixels, n_angles, n_pixels)
+        """
+        mu = self.mu.permute(1, 0).to(self._device)  # (energy_bins, number_of_materials)
+        I = self.I.to(self._device)                  # (energy_bins,)
+        I_sim = torch.zeros_like(As_n[0])            # (n_pixels, n_angles, n_pixels)
 
         for start in range(0, self.energy_bins, self.energy_chunk_size):
             end = min(start + self.energy_chunk_size, self.energy_bins)
-            mu_chunk = mu[start:end] # (chunk, number_of_materials)
+            mu_chunk = mu[start:end]  # (chunk, number_of_materials)
             exponent_chunk = torch.einsum('em,mrap->erap', mu_chunk, As_n)
             intensity_chunk = I[start:end].view(-1, 1, 1, 1) * torch.exp(-exponent_chunk)
             I_sim = I_sim + intensity_chunk.sum(dim=0)
         return I_sim
 
-    def compute_monochromatic_sinogram(self, reconstruction):
+    def _compute_I_sim(self, reconstruction):
+        """Polychromatic intensity from a 3-D volume: segment → project → spectrum sum.
+
+        reconstruction : (n_pixels, n_pixels, n_pixels) → (n_pixels, n_angles, n_pixels)
         """
-        After optimisation, produce a beam-hardening-free sinogram by replacing
-        the polychromatic sum with a single fluence-weighted effective mu per material:
+        As_n = self._material_path_sinograms(reconstruction)
+        return self._I_sim_from_As(As_n)
 
-            mu_eff[n] = sum_e(I_e * mu[n,e]) / sum_e(I_e)
-            A_mono = sum_n( mu_eff[n] * As_n )
+    def compute_corrected_sinogram(self, reconstruction, y_meas=None, correction_mode="replace"):
+        """
+        Build the sinogram to reconstruct for a beam-hardening-free volume.
 
-        This is the sinogram that a monochromatic source at the effective energy
-        would produce, so reconstructing from it removes beam-hardening artefacts.
+        From the current (segmented) volume and learned params it computes:
+            As_n   — per-material path sinograms (M, n_pixels, n_angles, n_pixels)
+            y_poly — polychromatic simulation −log(Σ_e I_e e^{−Σ μ·As} / ΣI)
+            mu_eff — monochromatic-equivalent attenuation per material (_effective_mu)
+            y_mono = Σ_m mu_eff[m]·As_n[m]   (linear in path length → no cupping)
+
+        correction_mode='replace'  → return y_mono (synthetic mono sinogram, original).
+        correction_mode='residual' → return y_meas + (y_mono − y_poly): correct the
+            measured sinogram by the modelled BH difference (original autodiffCT approach).
         """
         with torch.no_grad():
             reconstruction = reconstruction.to(self._device)
-            s = self._s(reconstruction)  # (number_of_materials, n_pixels, n_pixels, n_pixels)
-
-            l_list = []
-            for n in range(self.number_of_materials):
-                l_n = astra_forward_project_differentiable(s[n], self.n_angles)  # (n_pixels, n_angles, n_pixels)
-                l_list.append(l_n)
-
-            l = torch.stack(l_list, dim=0)  # (number_of_materials, n_pixels, n_angles, n_pixels)
-            As_n = l * self.voxel_size      # (number_of_materials, n_pixels, n_angles, n_pixels)  [cm]
+            As_n   = self._material_path_sinograms(reconstruction)   # (M, n_pixels, n_angles, n_pixels)
+            y_poly = self._compute_A_sim(self._I_sim_from_As(As_n))  # (n_pixels, n_angles, n_pixels)
 
             mu     = self.mu.to(self._device)   # (M, E)
             I      = self.I.to(self._device)    # (E,)
-            mu_eff = self._effective_mu(mu, I, As_n)   # (M,)
+            mu_eff = self._effective_mu(mu, I, As_n, y_poly=y_poly)  # (M,)
+            y_mono = torch.einsum('m,mrap->rap', mu_eff, As_n)       # (n_pixels, n_angles, n_pixels)
 
-            # A_mono[r,a,p] = sum_n( mu_eff[n] * As_n[n,r,a,p] )
-            A_mono = torch.einsum('m,mrap->rap', mu_eff, As_n)  # (n_pixels, n_angles, n_pixels)
+            if correction_mode == "residual":
+                if y_meas is None:
+                    raise ValueError("correction_mode='residual' requires y_meas")
+                return y_meas.to(self._device) + (y_mono - y_poly)
+            return y_mono
 
-        return A_mono
+    def compute_monochromatic_sinogram(self, reconstruction):
+        """Backward-compatible alias: the 'replace' correction (returns y_mono)."""
+        return self.compute_corrected_sinogram(reconstruction, correction_mode="replace")
 
-    def _effective_mu(self, mu, I, As_n):
+    def _effective_mu(self, mu, I, As_n, y_poly=None):
         """
         Monochromatic-equivalent linear attenuation per material, mu_eff (M,).
         See the 2-D ISP2D._effective_mu for the full rationale.
@@ -134,9 +143,25 @@ class ISP(torch.nn.Module):
             the absorbed soft spectral tail, so it can be wildly inflated.
         'transmission': weight by detected photons through a representative object
             path, w_e = I_e·exp(−Σ_m μ(e,m)·L_rep[m]) → physical mu_eff w/o filtration.
+        'lstsq' (original autodiffCT): least-squares regression of y_poly onto the
+            material path sinograms (mu_eff = pinv(B)·V). Measurement-weighted, uses
+            no spectrum average → immune to the soft-tail inflation.
         Dimension-agnostic: As_n is (M, *rays).
         """
-        if getattr(self, "mu_eff_mode", "fluence") == "transmission":
+        mode = getattr(self, "mu_eff_mode", "fluence")
+
+        if mode == "lstsq":
+            # mu_eff = argmin_a ||Σ_m a_m·As_n[m] − y_poly||² = pinv(B)·V,
+            #   B[i,j] = <As_i, As_j>,  V[i] = <As_i, y_poly>.
+            if y_poly is None:
+                raise ValueError("mu_eff_mode='lstsq' requires y_poly")
+            A_flat = As_n.reshape(As_n.shape[0], -1)   # (M, K)
+            y_flat = y_poly.reshape(-1)                 # (K,)
+            B = A_flat @ A_flat.t()                     # (M, M)
+            V = A_flat @ y_flat                         # (M,)
+            return torch.linalg.pinv(B) @ V             # (M,)
+
+        if mode == "transmission":
             total_path = As_n.sum(dim=0)
             object_rays = total_path > 1e-6
             if bool(object_rays.any()):
@@ -150,30 +175,46 @@ class ISP(torch.nn.Module):
 
     def _s(self, x):
         """
-        Since x is 3D volume (n_pixels, n_pixels, n_pixels)
-        t is (number_of_materials,)
-        gamma is scalar
-        The output should be (number_of_materials, n_pixels, n_pixels, n_pixels)
+        Soft material-fraction field via cumulative tanh thresholding (3-D).
+
+        x : (n_pixels, n_pixels, n_pixels) reconstruction volume
+        returns : (number_of_materials, n_pixels, n_pixels, n_pixels)
         """
+        # Normalise the recon to [0,1] before thresholding so that gamma is decoupled
+        # from the physical recon scale (~0.002-0.008). On raw values gamma*(x-t) stays
+        # tiny and tanh never saturates → mushy masks → the forward model cannot match
+        # the data. Working in [0,1] lets a fixed gamma produce crisp masks. The recon
+        # is a constant input (no grad through x), so its min/max are safe.
+        # (2-D §8.3 fix, ported to 3-D.)
+        x_min = x.min()
+        x_max = x.max()
+        x_norm = (x - x_min) / (x_max - x_min).clamp_min(1e-8)
+
         if not self._t_initialized:
-            thresholds = threshold_multiotsu(x.cpu().detach().numpy(),
-                                         classes=self.number_of_materials+1,
-                                         nbins=128)
-            self._t = torch.nn.Parameter(torch.tensor(thresholds, device=self._device, dtype=x.dtype), requires_grad=True)
+            # Otsu on the *normalised* recon, so learnable thresholds live in [0,1] too.
+            thresholds = threshold_multiotsu(x_norm.cpu().detach().numpy(),
+                                             classes=self.number_of_materials + 1,
+                                             nbins=128)
+            self._t = torch.nn.Parameter(
+                torch.tensor(thresholds, device=self._device, dtype=x.dtype),
+                requires_grad=True,
+            )
             self.add_param(self._t, "t", trainable=True)
             self._t_initialized = True
-            t = self.t  # _params["t"].tensor — tracked by optimizer
+            t = self.t
         else:
-            t = self.t  # _params["t"].tensor — updated by optimizer
-        # We need broadcasting to apply the tanh_thresholding function to each material separately
-        t = t.unsqueeze(0).unsqueeze(0).unsqueeze(0) # (1, 1, 1, number_of_materials)
-        t = t.reshape(self.number_of_materials, 1, 1, 1) # (number_of_materials, 1, 1, 1)
-        t = t.expand(t.shape[0], x.shape[0], x.shape[1], x.shape[2]) # (number_of_materials, n_pixels, n_pixels, n_pixels)
-        # Cumulative sigmoids: s_cum[n] = sigmoid(gamma*(x - t[n]))
-        s_cum = tanh_thresholding(x, t, self.gamma) # (number_of_materials, n_pixels, n_pixels, n_pixels)
-        # Convert to exclusive indicators: s[n] = s_cum[n] - s_cum[n+1]  (last stays)
-        # This gives s[n] ≈ 1 only where t[n] <= x < t[n+1], matching the paper's
-        # exclusive material indicator and keeping mu initialisation consistent.
+            t = self.t
+
+        # Keep thresholds ascending so the exclusive-mask subtraction can't go negative
+        # if Adam reorders them (torch.sort is differentiable).
+        t, _ = torch.sort(t)
+
+        t = t.reshape(self.number_of_materials, 1, 1, 1)
+        t = t.expand(self.number_of_materials, x.shape[0], x.shape[1], x.shape[2])
+
+        # s_cum[n] = 0.5(1 + tanh(gamma·(x_norm − t[n])))  — crisp now that x_norm ∈ [0,1]
+        s_cum = tanh_thresholding(x_norm, t, self.gamma)
+        # exclusive indicators: s[n] = s_cum[n] − s_cum[n+1]  (last stays)
         s = torch.cat([s_cum[:-1] - s_cum[1:], s_cum[-1:]], dim=0)
         return s
         

@@ -21,10 +21,12 @@ def render_phantom(
     top_r: float = 0.28,
     top_z_center: float = 0.20,
     top_z_radius: float = 0.28,
-    # Rods  
+    # Rods (near-vertical, tilted, arranged on a ring → strong beam hardening)
     n_cylinders: int = 6,
-    cyl_radius: float = 0.04,
-    cyl_z_range: tuple = (-0.4, 0.4),
+    cyl_radius: float = 0.055,          # thicker rods → more Al per ray → more hardening
+    cyl_z_range: tuple = (-0.4, 0.4),   # (kept for API compatibility; unused for tilted rods)
+    rod_tilt_deg: float = 45.0,         # tilt of each rod from vertical (0=vertical, 90=horizontal)
+    rod_ring_radius: float = 0.26,      # rod centres placed on a ring of this XY radius
     # Bubbles
     n_bubbles: int = 8,
     bubble_radius: float = 0.05,
@@ -50,7 +52,11 @@ def render_phantom(
     bot/top_z_radius: polar (z-axis) radii of each blob
     n_cylinders     : number of rods punched through the phantom
     cyl_radius      : radius of each rod
-    cyl_z_range     : uniform sampling range for rod z-intercept
+    cyl_z_range     : (unused for tilted rods; kept for API compatibility)
+    rod_tilt_deg    : tilt of each rod away from vertical (0 = vertical, 90 = horizontal).
+                      Near-vertical rods span the full height (Al in every slice) and the
+                      tilt gives long oblique chords → much more beam hardening than flat rods.
+    rod_ring_radius : rods are placed on a ring of this XY radius (inside the body)
     n_bubbles       : number of air-bubble voids
     bubble_radius   : radius of each bubble
     bubble_xy_range : XY sampling range for bubble centres
@@ -77,16 +83,26 @@ def render_phantom(
 
     rng = np.random.default_rng(seed)
 
-    # Rods (perpendicular to Z)
-    for _ in range(n_cylinders):
-        z_pos = rng.uniform(*cyl_z_range)
-        angle = rng.uniform(0, np.pi)
-        dx, dy = np.cos(angle), np.sin(angle)
-        dist = np.sqrt(
-            (Y * 0 - (Z - z_pos) * dy) ** 2
-            + ((Z - z_pos) * dx - X * 0) ** 2
-            + (X * dy - Y * dx) ** 2
-        )
+    # Al rods: near-vertical, tilted, arranged on a ring. A vertical rod spans the full
+    # object height (Al in every z-slice), and the tilt gives long oblique chords through
+    # the beam → much more beam hardening than the old flat (perpendicular-to-Z) rods,
+    # which only intersected a thin z-band.
+    tilt = np.deg2rad(rod_tilt_deg)
+    angle_offset = rng.uniform(0, 2 * np.pi)
+    for i in range(n_cylinders):
+        ring_az = angle_offset + 2 * np.pi * i / n_cylinders
+        cx = rod_ring_radius * np.cos(ring_az)    # rod axis passes through (cx, cy, 0)
+        cy = rod_ring_radius * np.sin(ring_az)
+        tilt_az = rng.uniform(0, 2 * np.pi)        # azimuth the rod leans toward
+        dx = np.sin(tilt) * np.cos(tilt_az)
+        dy = np.sin(tilt) * np.sin(tilt_az)
+        dz = np.cos(tilt)                           # dominant Z component → near-vertical
+        # perpendicular distance of each voxel to the rod axis line: |(r - P0) x d|, |d| = 1
+        rx, ry, rz = X - cx, Y - cy, Z
+        cross_x = ry * dz - rz * dy
+        cross_y = rz * dx - rx * dz
+        cross_z = rx * dy - ry * dx
+        dist = np.sqrt(cross_x**2 + cross_y**2 + cross_z**2)
         volume[(dist < cyl_radius) & (volume > 0)] = 2.0
 
     # Air bubbles

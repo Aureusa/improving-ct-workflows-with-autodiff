@@ -129,27 +129,28 @@ class ISP2D(torch.nn.Module):
         I_0  = torch.sum(self.I).clamp_min(eps)          # scalar
         return -torch.log((I_sim / I_0).clamp_min(eps))  # (n_angles, n_pixels)
 
-    def _compute_I_sim(self, reconstruction: torch.Tensor) -> torch.Tensor:
+    def _material_path_sinograms(self, reconstruction: torch.Tensor) -> torch.Tensor:
         """
-        Polychromatic intensity sum over all energy bins.
+        Soft-segment the recon and forward-project each material mask to a
+        path-length sinogram.
 
-        reconstruction : (n_pixels, n_pixels)
-        returns        : (n_angles, n_pixels)
+        returns : As_n (M, n_angles, n_pixels)  [cm]
         """
-        # Material decomposition: soft masks for each material
         s = self._s(reconstruction)  # (M, n_pixels, n_pixels)
-
-        # Forward-project each material's soft mask → path-length sinogram
         l_list = []
         for n in range(self.number_of_materials):
             l_n = astra_forward_project_2d_differentiable(s[n], self.n_angles)
-            # l_n : (n_angles, n_pixels)
-            l_list.append(l_n)
+            l_list.append(l_n)                       # (n_angles, n_pixels)
+        l = torch.stack(l_list, dim=0)               # (M, n_angles, n_pixels)
+        return l * self.voxel_size                    # (M, n_angles, n_pixels)  [cm]
 
-        l    = torch.stack(l_list, dim=0)  # (M, n_angles, n_pixels)
-        As_n = l * self.voxel_size         # (M, n_angles, n_pixels)  [cm]
+    def _I_sim_from_As(self, As_n: torch.Tensor) -> torch.Tensor:
+        """
+        Polychromatic intensity Σ_e I_e·exp(−Σ_m μ(e,m)·As_n[m]) given precomputed
+        material path sinograms, summed in energy chunks to avoid OOM.
 
-        # Beer–Lambert sum in energy chunks to avoid OOM
+        As_n : (M, n_angles, n_pixels)  →  (n_angles, n_pixels)
+        """
         mu   = self.mu.permute(1, 0).to(self._device)  # (E, M)
         I    = self.I.to(self._device)                  # (E,)
         I_sim = torch.zeros_like(As_n[0])               # (n_angles, n_pixels)
@@ -164,49 +165,61 @@ class ISP2D(torch.nn.Module):
 
         return I_sim  # (n_angles, n_pixels)
 
-    def compute_monochromatic_sinogram(
-        self, reconstruction: torch.Tensor
+    def _compute_I_sim(self, reconstruction: torch.Tensor) -> torch.Tensor:
+        """Polychromatic intensity from a recon: segment → project → spectrum sum."""
+        As_n = self._material_path_sinograms(reconstruction)  # (M, n_angles, n_pixels)
+        return self._I_sim_from_As(As_n)                      # (n_angles, n_pixels)
+
+    def compute_corrected_sinogram(
+        self,
+        reconstruction: torch.Tensor,
+        y_meas: torch.Tensor = None,
+        correction_mode: str = "replace",
     ) -> torch.Tensor:
         """
-        After optimisation, synthesise a beam-hardening-free sinogram:
+        Build the sinogram to reconstruct for a beam-hardening-free image.
 
-            A_mono = Σ_m( mu_eff[m] · As_n[m] )
+        From the current (segmented) recon and learned params it computes:
+            As_n   — per-material path sinograms (M, n_angles, n_pixels)
+            y_poly — polychromatic simulation −log(Σ_e I_e e^{−Σ μ·As} / ΣI)
+            mu_eff — monochromatic-equivalent attenuation per material (_effective_mu)
+            y_mono = Σ_m mu_eff[m]·As_n[m]   (linear in path length → no cupping)
 
-        mu_eff is the monochromatic-equivalent attenuation per material; see
-        _effective_mu for the 'fluence' (original) vs 'transmission' weighting.
-        A_mono is linear in path length, so reconstructing it has no cupping.
-
-        Parameters
-        ----------
-        reconstruction : float32 tensor (n_pixels, n_pixels)
+        correction_mode
+        ----------------
+        'replace'  : return y_mono — reconstruct a fully synthetic mono sinogram
+                     (original behaviour of this repo).
+        'residual' : return y_meas + (y_mono − y_poly) — correct the *measured*
+                     sinogram by the modelled beam-hardening difference, preserving
+                     real measurement detail (the original autodiffCT approach).
 
         Returns
         -------
-        A_mono : float32 tensor (n_angles, n_pixels)
+        sinogram : float32 tensor (n_angles, n_pixels)
         """
         with torch.no_grad():
             reconstruction = reconstruction.to(self._device)
-            s = self._s(reconstruction)  # (M, n_pixels, n_pixels)
-
-            l_list = []
-            for n in range(self.number_of_materials):
-                l_n = astra_forward_project_2d_differentiable(s[n], self.n_angles)
-                l_list.append(l_n)
-
-            l    = torch.stack(l_list, dim=0)   # (M, n_angles, n_pixels)
-            As_n = l * self.voxel_size           # (M, n_angles, n_pixels)  [cm]
+            As_n   = self._material_path_sinograms(reconstruction)   # (M, n_angles, n_pixels)
+            y_poly = self._compute_A_sim(self._I_sim_from_As(As_n))  # (n_angles, n_pixels)
 
             mu     = self.mu.to(self._device)    # (M, E)
             I      = self.I.to(self._device)     # (E,)
-            mu_eff = self._effective_mu(mu, I, As_n)   # (M,)
+            mu_eff = self._effective_mu(mu, I, As_n, y_poly=y_poly)  # (M,)
+            y_mono = torch.einsum("m,map->ap", mu_eff, As_n)         # (n_angles, n_pixels)
 
-            # A_mono[a, p] = Σ_m( mu_eff[m] · As_n[m, a, p] )
-            A_mono = torch.einsum("m,map->ap", mu_eff, As_n)  # (n_angles, n_pixels)
+            if correction_mode == "residual":
+                if y_meas is None:
+                    raise ValueError("correction_mode='residual' requires y_meas")
+                return y_meas.to(self._device) + (y_mono - y_poly)
+            return y_mono
 
-        return A_mono
+    def compute_monochromatic_sinogram(self, reconstruction: torch.Tensor) -> torch.Tensor:
+        """Backward-compatible alias: the 'replace' correction (returns y_mono)."""
+        return self.compute_corrected_sinogram(reconstruction, correction_mode="replace")
 
     def _effective_mu(
-        self, mu: torch.Tensor, I: torch.Tensor, As_n: torch.Tensor
+        self, mu: torch.Tensor, I: torch.Tensor, As_n: torch.Tensor,
+        y_poly: torch.Tensor = None,
     ) -> torch.Tensor:
         """
         Monochromatic-equivalent linear attenuation per material, mu_eff (M,).
@@ -225,9 +238,27 @@ class ISP2D(torch.nn.Module):
             the object (data-driven — no arbitrary reference energy/thickness).
             Restores physical mu_eff (Al ≈ 1.5 cm⁻¹) without needing filtration.
 
+        mode='lstsq' (original autodiffCT): least-squares regression of y_poly onto
+            the material path sinograms (see body). Measurement-weighted, uses no
+            spectrum average at all, so it sidesteps the soft-tail inflation entirely.
+
         Dimension-agnostic in the spatial axes: As_n is (M, *rays).
         """
-        if getattr(self, "mu_eff_mode", "fluence") == "transmission":
+        mode = getattr(self, "mu_eff_mode", "fluence")
+
+        if mode == "lstsq":
+            # mu_eff = argmin_a || Σ_m a_m·As_n[m] − y_poly ||²  =  pinv(B)·V,
+            #   B[i,j] = <As_i, As_j>,  V[i] = <As_i, y_poly>.
+            # Immune to soft-tail inflation: it never weights by the spectrum.
+            if y_poly is None:
+                raise ValueError("mu_eff_mode='lstsq' requires y_poly")
+            A_flat = As_n.reshape(As_n.shape[0], -1)        # (M, K)
+            y_flat = y_poly.reshape(-1)                      # (K,)
+            B = A_flat @ A_flat.t()                          # (M, M)
+            V = A_flat @ y_flat                              # (M,)
+            return torch.linalg.pinv(B) @ V                  # (M,)
+
+        if mode == "transmission":
             total_path = As_n.sum(dim=0)                          # (*rays)
             object_rays = total_path > 1e-6                        # rays through the object
             if bool(object_rays.any()):

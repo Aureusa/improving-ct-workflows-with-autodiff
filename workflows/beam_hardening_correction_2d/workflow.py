@@ -60,9 +60,11 @@ class BeamHardeningCorrectionWorkflow2D(Workflow):
     freeze_spectral    : if True, hold I/mu at ground truth and learn only t (honest test)
     al_filter_mm       : added Al tube filtration [mm]; removes the soft spectral tail
                          that otherwise inflates mu_eff (0.0 = no added filtration)
-    mu_eff_mode        : 'fluence' (original) or 'transmission'; the latter weights
-                         mu_eff by detected (transmitted) photons → physical mu_eff
-                         without filtration (see ISP2D._effective_mu)
+    mu_eff_mode        : 'fluence' (original), 'transmission', or 'lstsq' (original
+                         autodiffCT least-squares regression) — effective attenuation
+                         weighting (see ISP2D._effective_mu)
+    correction_mode    : 'replace' (reconstruct a synthetic mono sinogram) or 'residual'
+                         (y_meas + y_mono − y_poly; preserves real detail — autodiffCT)
     spectral_perturb   : perturb the I/mu init away from ground truth by this fraction
                          (per-bin ±); makes recovery an honest test with freeze_spectral=False
     spectral_perturb_seed : RNG seed for the spectral perturbation
@@ -85,6 +87,7 @@ class BeamHardeningCorrectionWorkflow2D(Workflow):
         freeze_spectral: bool = False,
         al_filter_mm: float = 0.0,
         mu_eff_mode: str = "fluence",
+        correction_mode: str = "replace",
         spectral_perturb: float = 0.0,
         spectral_perturb_seed: int = 0,
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
@@ -130,6 +133,7 @@ class BeamHardeningCorrectionWorkflow2D(Workflow):
         self._loss_fn     = PhiLoss()
         self._lr          = lr
         self._outer_iters = outer_iters
+        self._correction_mode = correction_mode
         self._device      = device
 
         # Build initial optimizer (t is not yet in _params — added on first forward)
@@ -192,10 +196,12 @@ class BeamHardeningCorrectionWorkflow2D(Workflow):
             print(f"\n[outer {outer + 1}/{self._outer_iters}]")
             history += self._optim_loop(measured_projection, current_recon)
 
-            mono_sinogram = self.SpectralProjection2D.compute_monochromatic_sinogram(
-                current_recon
+            corrected_sino = self.SpectralProjection2D.compute_corrected_sinogram(
+                current_recon,
+                y_meas=measured_projection,
+                correction_mode=self._correction_mode,
             )
-            correct_np           = self.CorrectProjection.execute(mono_sinogram)
+            correct_np           = self.CorrectProjection.execute(corrected_sino)
             final_reconstruction = self.Reconstruct2D.execute(correct_np)
             current_recon = (
                 torch.from_numpy(final_reconstruction).float().to(self._device)

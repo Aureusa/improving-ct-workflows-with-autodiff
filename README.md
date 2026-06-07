@@ -106,8 +106,8 @@ optimised; the per-pass recon is otherwise treated as a fixed input.
 
 ```bash
 # from the repo root
-python main_2d.py        # 2-D (primary)
-python main_2d_clean.py  # 2-D honest/clean validation (noise off, dk=2, I/mu frozen) — see §8.5
+python main_2d.py        # 2-D PRIMARY results — lstsq mu_eff + residual correction (§8.8)
+python main_2d_clean.py  # 2-D experimentation harness — CLI flags for every regime (§8.5–8.8)
 python main.py           # 3-D
 ```
 
@@ -139,6 +139,11 @@ math and the plotting functions can still be exercised in isolation.
 ---
 
 ## 5. Output figures (what each PNG shows)
+
+> **Update (§8.8):** `main_2d.py` now writes `comparison_2d.png`, `cupping_2d.png`, and
+> `optimization_history_2d.png` (lstsq + residual config). The per-reconstruction and
+> threshold figures in the table below come from the earlier flow, still reachable via
+> `main_2d_clean.py` / the standalone phantom script.
 
 Produced by `main_2d.py`:
 
@@ -383,3 +388,94 @@ python main_2d_clean.py                                  # frozen + transmission
 python main_2d_clean.py --no-freeze --perturb 0.3 --suffix _recovery   # honest recovery test
 python main_2d_clean.py --mu-eff-mode fluence            # the broken baseline
 ```
+
+### 8.8 Closing the gap to the original authors (`og_work/`) — least-squares `μ_eff` + residual correction
+`og_work/` is the original authors' `autodiffCT` codebase. Reading `og_work/autodiffCT/ISP.py`
+showed the overall method matches ours, but **two of their choices are more robust** than our
+re-implementation — now adopted (2-D):
+
+- **`mu_eff_mode="lstsq"`** — instead of averaging the spectrum, solve a least-squares
+  regression for the per-material effective attenuation that best reproduces the
+  polychromatic simulation: `mu_eff = argmin_a ‖Σ_m a_m·As_m − y_poly‖² = pinv(B)·V`,
+  `B[i,j]=⟨As_i,As_j⟩`, `V[i]=⟨As_i,y_poly⟩`. Measurement-weighted by construction →
+  **structurally immune to the soft-tail inflation (§8.5)** and best per-material uniformity.
+- **`correction_mode="residual"`** — instead of reconstructing a fully synthetic mono
+  sinogram, correct the *measured* one by the modelled BH difference:
+  **`y_corrected = y_meas + (y_mono − y_poly)`**. Preserves real measurement detail and
+  removes almost all the cupping.
+
+Both are threaded model → block → workflow in **both pipelines** (2-D `ISP2D` and 3-D
+`ISP`); **defaults stay `"fluence"`/`"replace"`**, so `main_2d.py` / `main.py`'s old
+behaviour is unchanged unless selected. `main.py` (3-D) now also runs
+`mu_eff_mode="lstsq"`, `correction_mode="residual"`. The 3-D port is validated by
+byte-compile + a unit test of the new lstsq/residual math (it recovers known linear
+coefficients exactly) + energy-bin alignment (`dk=50` → 3 bins matches `energy_bins=3`);
+a full 3-D run still needs HPC (ASTRA-CUDA memory, and a working-matplotlib env since
+`render_phantom` plots in-process).
+
+**Config comparison (frozen, dk=2, no filtration, outer=1):**
+
+| `mu_eff_mode` | `correction_mode` | corrected cupping | PMMA CoV | Al CoV |
+|---|---|---|---|---|
+| transmission | replace | 7.1% | 0.105 | 0.072 |
+| lstsq | replace | 7.1% | 0.077 | 0.064 |
+| transmission | **residual** | **0.4%** | 0.099 | 0.074 |
+| **lstsq** | **residual** | 2.4% | **0.069** | 0.066 |
+
+The residual correction is the big cupping win; lstsq gives the best material uniformity.
+
+**`main_2d.py` is now the primary results runner** — `mu_eff_mode="lstsq"`,
+`correction_mode="residual"`, `freeze_spectral=False` (honest — learns the spectrum, lstsq
+doesn't rely on it being exact), `dk=2`, noise off, `outer_iters=1`:
+
+```
+PMMA cupping 25.3% → 3.1%   |   PMMA CoV 0.159 → 0.066   |   Al mean preserved exactly
+```
+
+It writes `comparison_2d.png`, `cupping_2d.png`, `optimization_history_2d.png` (via the
+`plot_clean_results.py` subprocess) and prints the report. `main_2d_clean.py` remains the
+flag-driven harness (now with `--mu-eff-mode lstsq` and `--correction-mode residual`).
+
+### 8.9 3-D fix — two bugs: ~0% hardening, *and* a broken segmentation/optimizer
+`main.py` was producing `original_reconstruction.png` ≡ `final_reconstruction.png`
+(correction does nothing) with a flat loss. **Two compounding bugs.** *(1)* The 3-D data
+generator had almost no hardening to correct: `ProjectionData` used `dk=50`, which spekpy
+resolves to only **3 energy bins** → an effectively monochromatic beam:
+
+| `dk` | energy bins | hardening (0.5 cm PMMA) |
+|---|---|---|
+| **50 (old)** | **3** | **0.0%** |
+| 5 (new) | 35 | 47% |
+| 2 | 89 | 78% |
+
+(`dk≈10` is a trap here — 17 bins still under-resolves → ~5%; `dk=5`/`8` jump to ~47%.)
+
+*(2)* But `dk` alone was **not** sufficient: with hardening added, the correction *still*
+did nothing (cupping 19.4% → 19.4%, per-material values unchanged, loss stuck at 1.77e-2).
+The 3-D front end had **never received the 2-D §8.3 fixes**, so the fit could not converge:
+`_s` thresholded the **raw** recon (~0.005) with `gamma=100` → mushy masks, and the
+optimiser used a **single** lr over `I`(~1e5)/`mu`/`t` (so `I` was effectively frozen).
+
+Fix (3-D, mirroring 2-D §8.3 / §8.5):
+- **`ProjectionData` `dk` 50 → 5** (default), exposed through the workflow.
+- **Workflow auto-detects `energy_bins`** from `fluence.npy` (drops hard-coded `energy_bins`).
+- **`_s` normalises the recon to [0,1]** before tanh-thresholding (crisp masks) + sorts `t`.
+- **`_build_optimizer`: per-parameter LR** scaled by each parameter's magnitude.
+- **`ProjectionData` no longer plots the phantom in-pipeline** (`render_phantom(show_3d=False, …)`).
+- **`main.py`** drops `energy_bins=3`, sets `dk=5`, `optim_steps=300`, keeps
+  `mu_eff_mode="lstsq"`, `correction_mode="residual"`.
+
+**Validated end-to-end (50 steps, dk=5, lstsq + residual, phantom-mask metrics):** the fit
+now converges (loss 1.77e-2 → 6.7e-6) and the correction de-cups for real:
+
+| metric | data fix only | + segmentation/optimizer fix |
+|---|---|---|
+| PMMA cupping (orig → corr) | 19.4% → **19.4%** | 19.4% → **0.9%** |
+| PMMA CoV (corr) | 0.197 | **0.067** |
+| Al CoV (corr) | 0.159 | **0.042** |
+
+(Masks verified aligned: Air < PMMA < Al; means preserved.) Only the two *critical* 2-D
+fixes were ported — the iterative outer loop and `freeze_spectral` are still 2-D-only (not
+needed here). A full high-iteration `main.py` run is GPU-heavy (128³, ~35 bins, SIRT-1000
+×2) and `plot_reconstruction` plots in-process — re-run it in a working-matplotlib env to
+refresh `*_reconstruction.png`; the metrics above already confirm the correction works.

@@ -75,7 +75,13 @@ def _print_report(metrics, header, mu_eff_gt=None, mu_eff_learned=None):
 
 def main():
     ap = argparse.ArgumentParser(description="Clean-validation / honest-test harness (2-D BHC).")
-    ap.add_argument("--mu-eff-mode", choices=["fluence", "transmission"], default="transmission")
+    ap.add_argument("--mu-eff-mode", choices=["fluence", "transmission", "lstsq"],
+                    default="transmission",
+                    help="effective-attenuation weighting. 'lstsq' = original autodiffCT "
+                         "least-squares regression (most robust).")
+    ap.add_argument("--correction-mode", choices=["replace", "residual"], default="replace",
+                    help="'replace' = reconstruct synthetic mono sinogram; "
+                         "'residual' = y_meas + (y_mono - y_poly), preserves real detail (autodiffCT).")
     ap.add_argument("--freeze", action=argparse.BooleanOptionalAction, default=True,
                     help="freeze I/mu at ground truth (learn only t). --no-freeze learns I/mu too.")
     ap.add_argument("--perturb", type=float, default=0.0,
@@ -95,6 +101,7 @@ def main():
         optim_steps=args.steps, lr=0.001, outer_iters=args.outer,
         dk=args.dk, add_gaussian_noise=0.0,
         freeze_spectral=args.freeze, mu_eff_mode=args.mu_eff_mode,
+        correction_mode=args.correction_mode,
         al_filter_mm=args.al_filter,
         spectral_perturb=args.perturb, spectral_perturb_seed=args.perturb_seed,
     )
@@ -112,7 +119,8 @@ def main():
     mu_eff_gt      = _trans_mu_eff(gt_I, gt_mu)
     mu_eff_learned = _trans_mu_eff(learned_I, learned_mu)
 
-    header = (f"mode={args.mu_eff_mode} freeze={args.freeze} perturb={args.perturb} "
+    header = (f"mu_eff={args.mu_eff_mode} correction={args.correction_mode} "
+              f"freeze={args.freeze} perturb={args.perturb} "
               f"dk={args.dk} al_filter={args.al_filter}mm steps={args.steps}x{args.outer}")
     _print_report(metrics, header, mu_eff_gt, mu_eff_learned)
 

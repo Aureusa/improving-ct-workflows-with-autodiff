@@ -23,7 +23,10 @@ _DATA_DIR = os.path.dirname(os.path.abspath(__file__))
 #               Input blocks                  #
 ##############################################
 class ProjectionData(Block):
-    def __init__(self, kvp=180, th=12, dk=50, physics="spekcalc"):
+    # dk=50 yields only ~3 energy bins → an effectively monochromatic beam with ~0%
+    # beam hardening (original/final reconstructions come out identical). dk=5 → ~35
+    # bins → ~47% hardening at this object size, so there is a real artefact to correct.
+    def __init__(self, kvp=180, th=12, dk=5, physics="spekcalc"):
         super().__init__()
         self.kvp = kvp
         self.th = th
@@ -36,8 +39,8 @@ class ProjectionData(Block):
         
         pmma_mu = generate_linear_attenuation_params(r, ("C5H8O2"))  # Get attenuation coefficients for PMMA
         al_mu = generate_linear_attenuation_params(r, "Al")  # Get attenuation coefficients for Aluminum
-        phantom = render_phantom(show_projection=False)
-        
+        phantom = render_phantom(show_3d=False, show_projection=False)  # no in-pipeline matplotlib
+
         sinogram = calculate_I(r, pmma_mu, al_mu, phantom, scale=0.5 / 128, add_gaussian_noise=0.00)
 
         # Saving
