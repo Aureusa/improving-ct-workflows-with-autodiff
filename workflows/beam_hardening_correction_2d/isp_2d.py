@@ -44,6 +44,9 @@ class ISP2D(torch.nn.Module):
         energy_bins: int = 3,
         energy_chunk_size: int = 16,
         voxel_size: float = 5.0 / 256,
+        mu_eff_mode: str = "fluence",
+        spectral_perturb: float = 0.0,
+        spectral_perturb_seed: int = 0,
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
     ):
         super(ISP2D, self).__init__()
@@ -54,6 +57,7 @@ class ISP2D(torch.nn.Module):
         self.energy_bins       = energy_bins
         self.energy_chunk_size = energy_chunk_size
         self.voxel_size        = voxel_size
+        self.mu_eff_mode       = mu_eff_mode   # 'fluence' (original) | 'transmission'
         self._device           = device
         self._t_initialized    = False
 
@@ -79,6 +83,19 @@ class ISP2D(torch.nn.Module):
         self._mu    = torch.nn.Parameter(
             torch.from_numpy(mu_vals).float(), requires_grad=True
         )   # (number_of_materials, energy_bins)
+
+        # Optionally perturb the spectral init AWAY from ground truth (per-bin
+        # multiplicative ±spectral_perturb). ISP2D otherwise loads I/mu from the
+        # exact spectrum that generated the data, so with freeze_spectral=False the
+        # optimisation would still *start* at truth — "loss goes down" then proves
+        # nothing (README §6). A nonzero perturb makes recovery an honest test.
+        if spectral_perturb > 0:
+            g = torch.Generator().manual_seed(spectral_perturb_seed)
+            I_fac  = 1.0 + spectral_perturb * (2.0 * torch.rand(self._I.shape,  generator=g) - 1.0)
+            mu_fac = 1.0 + spectral_perturb * (2.0 * torch.rand(self._mu.shape, generator=g) - 1.0)
+            self._I  = torch.nn.Parameter((self._I.detach()  * I_fac ).clamp_min(0.0), requires_grad=True)
+            self._mu = torch.nn.Parameter((self._mu.detach() * mu_fac).clamp_min(0.0), requires_grad=True)
+
         self._t     = torch.nn.Parameter(
             torch.rand(self.number_of_materials), requires_grad=True
         )   # (number_of_materials,)  — overwritten by Otsu on first forward pass
@@ -153,8 +170,11 @@ class ISP2D(torch.nn.Module):
         """
         After optimisation, synthesise a beam-hardening-free sinogram:
 
-            mu_eff[m] = Σ_e( I_e · μ[m,e] ) / Σ_e(I_e)
-            A_mono    = Σ_m( mu_eff[m] · As_n[m] )
+            A_mono = Σ_m( mu_eff[m] · As_n[m] )
+
+        mu_eff is the monochromatic-equivalent attenuation per material; see
+        _effective_mu for the 'fluence' (original) vs 'transmission' weighting.
+        A_mono is linear in path length, so reconstructing it has no cupping.
 
         Parameters
         ----------
@@ -174,18 +194,52 @@ class ISP2D(torch.nn.Module):
                 l_list.append(l_n)
 
             l    = torch.stack(l_list, dim=0)   # (M, n_angles, n_pixels)
-            As_n = l * self.voxel_size           # (M, n_angles, n_pixels)
+            As_n = l * self.voxel_size           # (M, n_angles, n_pixels)  [cm]
 
-            I     = self.I.to(self._device)      # (E,)
-            I_sum = I.sum().clamp_min(1e-8)
-            mu_eff = (
-                self.mu.to(self._device) * I.unsqueeze(0)
-            ).sum(dim=1) / I_sum                 # (M,)
+            mu     = self.mu.to(self._device)    # (M, E)
+            I      = self.I.to(self._device)     # (E,)
+            mu_eff = self._effective_mu(mu, I, As_n)   # (M,)
 
             # A_mono[a, p] = Σ_m( mu_eff[m] · As_n[m, a, p] )
             A_mono = torch.einsum("m,map->ap", mu_eff, As_n)  # (n_angles, n_pixels)
 
         return A_mono
+
+    def _effective_mu(
+        self, mu: torch.Tensor, I: torch.Tensor, As_n: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Monochromatic-equivalent linear attenuation per material, mu_eff (M,).
+
+        mode='fluence' (original): mu_eff[m] = Σ_e I_e·μ(e,m) / Σ_e I_e
+            — the thin-object initial slope. Dominated by the soft spectral tail
+              (μ huge, but those photons are fully absorbed in the object), so it
+              can be wildly inflated (Al → 53 cm⁻¹ at dk=2 unfiltered) and the
+              corrected reconstruction explodes.
+
+        mode='transmission': weight each energy bin by the photons that actually
+            survive a representative object path, T_e = exp(−Σ_m μ(e,m)·L_rep[m]),
+            so absorbed soft photons get ~zero weight:
+                w_e = I_e · T_e ;   mu_eff[m] = Σ_e w_e·μ(e,m) / Σ_e w_e
+            L_rep[m] = mean path through material m over the rays that intersect
+            the object (data-driven — no arbitrary reference energy/thickness).
+            Restores physical mu_eff (Al ≈ 1.5 cm⁻¹) without needing filtration.
+
+        Dimension-agnostic in the spatial axes: As_n is (M, *rays).
+        """
+        if getattr(self, "mu_eff_mode", "fluence") == "transmission":
+            total_path = As_n.sum(dim=0)                          # (*rays)
+            object_rays = total_path > 1e-6                        # rays through the object
+            if bool(object_rays.any()):
+                L_rep = As_n[:, object_rays].mean(dim=1)          # (M,)
+            else:
+                L_rep = As_n.reshape(As_n.shape[0], -1).mean(dim=1)
+            attn = torch.einsum("me,m->e", mu, L_rep)             # (E,) Σ_m μ(e,m)·L_rep[m]
+            w = I * torch.exp(-attn)                               # (E,) detected-photon weight
+            return (mu * w.unsqueeze(0)).sum(dim=1) / w.sum().clamp_min(1e-8)
+
+        # default: fluence-weighted (original)
+        return (mu * I.unsqueeze(0)).sum(dim=1) / I.sum().clamp_min(1e-8)
 
     def _s(self, x: torch.Tensor) -> torch.Tensor:
         """

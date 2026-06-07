@@ -85,7 +85,7 @@ class CorrectProjection(Block):
 ###############################################
 
 class SpectralProjection(Block, ISP):
-    def __init__(self, n_angles=360, number_of_materials=2, gamma=1.0, energy_bins=3, voxel_size=0.5/128, device: str = "cuda" if torch.cuda.is_available() else "cpu"):
+    def __init__(self, n_angles=360, number_of_materials=2, gamma=1.0, energy_bins=3, voxel_size=0.5/128, mu_eff_mode="fluence", device: str = "cuda" if torch.cuda.is_available() else "cpu"):
         Block.__init__(self)
         ISP.__init__(
             self,
@@ -94,6 +94,7 @@ class SpectralProjection(Block, ISP):
             gamma=gamma,
             energy_bins=energy_bins,
             voxel_size=voxel_size,
+            mu_eff_mode=mu_eff_mode,
             device=device
         )
         self.add_param(self._I, "I", trainable=True)

@@ -54,6 +54,7 @@ class ProjectionData2D(Block):
         add_gaussian_noise: float = 0.0,
         n_angles: int = 360,
         noise_seed: int = 0,
+        al_filter_mm: float = 0.0,
     ):
         super().__init__()
         self.kvp               = kvp
@@ -65,6 +66,7 @@ class ProjectionData2D(Block):
         self.add_gaussian_noise = add_gaussian_noise
         self.n_angles          = n_angles
         self.noise_seed        = noise_seed
+        self.al_filter_mm      = al_filter_mm
 
     def execute(self) -> np.ndarray:
         """
@@ -74,6 +76,16 @@ class ProjectionData2D(Block):
             Polychromatic attenuation sinogram −log(I / I₀).
         """
         r = sp.Spek(kvp=self.kvp, th=self.th, dk=self.dk, physics=self.physics)
+
+        # Optional added tube filtration. Without it spekpy keeps a large <20 keV
+        # soft tail (here ~25% of fluence at dk=2) where mu is enormous (Al ~2000
+        # cm^-1 at 3 keV). Those photons are fully absorbed in the object so they
+        # don't affect the measured sinogram, but they dominate the fluence-weighted
+        # mu_eff used for correction (Al mu_eff jumps 1.6 -> 53 cm^-1), making the
+        # monochromatic target unphysical. A few mm of Al (standard on real CT
+        # tubes) removes the tail and restores a sane mu_eff.
+        if self.al_filter_mm > 0:
+            r.filter("Al", self.al_filter_mm)
 
         pmma_mu = generate_linear_attenuation_params(r, "C5H8O2")
         al_mu   = generate_linear_attenuation_params(r, "Al")
@@ -172,6 +184,10 @@ class SpectralProjection2D(Block, ISP2D):
         mu    — linear attenuation  (number_of_materials, energy_bins)
         gamma — steepness (frozen)
         t     — Otsu-initialised thresholds (added on first forward pass)
+
+    If freeze_spectral=True, I and mu are registered as non-trainable, so the
+    optimizer only ever updates t (the "honest test" from README §6 — it stops
+    the per-parameter LR from drifting mu_eff away from its ground-truth init).
     """
 
     def __init__(
@@ -181,6 +197,10 @@ class SpectralProjection2D(Block, ISP2D):
         gamma: float = 1.0,
         energy_bins: int = 3,
         voxel_size: float = 5.0 / 256,
+        freeze_spectral: bool = False,
+        mu_eff_mode: str = "fluence",
+        spectral_perturb: float = 0.0,
+        spectral_perturb_seed: int = 0,
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
     ):
         Block.__init__(self)
@@ -191,10 +211,17 @@ class SpectralProjection2D(Block, ISP2D):
             gamma=gamma,
             energy_bins=energy_bins,
             voxel_size=voxel_size,
+            mu_eff_mode=mu_eff_mode,
+            spectral_perturb=spectral_perturb,
+            spectral_perturb_seed=spectral_perturb_seed,
             device=device,
         )
-        self.add_param(self._I,     "I",     trainable=True)
-        self.add_param(self._mu,    "mu",    trainable=True)
+        # freeze_spectral=True → hold I and mu fixed at their ground-truth
+        # initialisation; Block.parameters() only yields trainable params, so the
+        # optimizer will then update only t (added on the first forward pass).
+        spectral_trainable = not freeze_spectral
+        self.add_param(self._I,     "I",     trainable=spectral_trainable)
+        self.add_param(self._mu,    "mu",    trainable=spectral_trainable)
         self.add_param(self._gamma, "gamma", trainable=False)
         self._params["I"].to(device)
         self._params["mu"].to(device)

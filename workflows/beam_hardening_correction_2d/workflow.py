@@ -53,6 +53,19 @@ class BeamHardeningCorrectionWorkflow2D(Workflow):
     gamma              : steepness of soft thresholding in ISP2D
     size               : phantom pixel grid (size × size)
     scale              : cm per pixel  (physical_width_cm / size)
+    outer_iters        : iterative-correction passes (total steps = optim_steps * outer_iters)
+    dk                 : spectrum bin width [keV] (smaller → more bins → stronger hardening)
+    add_gaussian_noise : fractional Gaussian noise on the simulated sinogram (0.0 = clean)
+    noise_seed         : RNG seed for the simulated noise (reproducibility)
+    freeze_spectral    : if True, hold I/mu at ground truth and learn only t (honest test)
+    al_filter_mm       : added Al tube filtration [mm]; removes the soft spectral tail
+                         that otherwise inflates mu_eff (0.0 = no added filtration)
+    mu_eff_mode        : 'fluence' (original) or 'transmission'; the latter weights
+                         mu_eff by detected (transmitted) photons → physical mu_eff
+                         without filtration (see ISP2D._effective_mu)
+    spectral_perturb   : perturb the I/mu init away from ground truth by this fraction
+                         (per-bin ±); makes recovery an honest test with freeze_spectral=False
+    spectral_perturb_seed : RNG seed for the spectral perturbation
     device             : 'cuda' or 'cpu'
     """
 
@@ -66,6 +79,14 @@ class BeamHardeningCorrectionWorkflow2D(Workflow):
         size: int = 256,
         scale: float = 5.0 / 256,
         outer_iters: int = 3,
+        dk: float = 10.0,
+        add_gaussian_noise: float = 0.02,
+        noise_seed: int = 0,
+        freeze_spectral: bool = False,
+        al_filter_mm: float = 0.0,
+        mu_eff_mode: str = "fluence",
+        spectral_perturb: float = 0.0,
+        spectral_perturb_seed: int = 0,
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
     ):
         super().__init__()
@@ -75,8 +96,11 @@ class BeamHardeningCorrectionWorkflow2D(Workflow):
         self.add_block(ProjectionData2D(
             size=size,
             scale=scale,
-            add_gaussian_noise=0.02,
+            dk=dk,
+            add_gaussian_noise=add_gaussian_noise,
+            noise_seed=noise_seed,
             n_angles=n_angles,
+            al_filter_mm=al_filter_mm,
         ))
         self._input_data = self.ProjectionData2D.execute()
 
@@ -95,6 +119,10 @@ class BeamHardeningCorrectionWorkflow2D(Workflow):
             energy_bins=energy_bins,
             gamma=gamma,
             voxel_size=scale,   # keep physical scale consistent with ProjectionData2D
+            freeze_spectral=freeze_spectral,
+            mu_eff_mode=mu_eff_mode,
+            spectral_perturb=spectral_perturb,
+            spectral_perturb_seed=spectral_perturb_seed,
             device=device,
         ))
 

@@ -107,6 +107,7 @@ optimised; the per-pass recon is otherwise treated as a fixed input.
 ```bash
 # from the repo root
 python main_2d.py        # 2-D (primary)
+python main_2d_clean.py  # 2-D honest/clean validation (noise off, dk=2, I/mu frozen) — see §8.5
 python main.py           # 3-D
 ```
 
@@ -243,3 +244,142 @@ validation.**
 - **`requirments.txt`:** added `scikit-image`, `tqdm`; dropped unused `scipy`; kept
   `plotly` (used by 3-D phantom + notebook); documented `astra-toolbox` as conda-only.
 - **`README.md`:** this file — created as the canonical re-priming summary.
+
+### 8.5 Clean-validation harness (`main_2d_clean.py`)
+A separate 2-D entry point that runs the pipeline as an *honest* test, removing the
+confounders flagged in §6 so "did the correction work?" gets a readable answer:
+- `add_gaussian_noise=0.0` — noise no longer buries the cupping bowl.
+- `dk=2.0` — strong, unambiguous beam hardening.
+- `freeze_spectral=True` — `I`/`mu` held at ground truth; only the segmentation
+  thresholds `t` are learned, so the per-parameter LR cannot drift `μ_eff`.
+
+Supporting changes (all backward-compatible — `main_2d.py` is unchanged):
+- **`workflow.py`:** `BeamHardeningCorrectionWorkflow2D` gained pass-through args
+  `dk`, `add_gaussian_noise`, `noise_seed`, `freeze_spectral` (previously `dk` was
+  fixed at the `ProjectionData2D` default and noise was hard-coded to `0.02`).
+- **`blocks.py`:** `SpectralProjection2D` gained `freeze_spectral` — registers `I`/`mu`
+  as **non-trainable** so `Block.parameters()` (and thus the optimizer) only sees `t`.
+- **`plotting.py`:** new `plot_cupping_validation_2d` (PMMA-only **radial** profile +
+  per-material mean±std) and `compute_validation_metrics` (PMMA **cupping %** =
+  100·(rim−centre)/rim, per-material **CoV**). These replace the noisy
+  through-the-bubbles centre line with a metric you can actually read.
+
+Supporting changes also include `al_filter_mm` (added Al tube filtration, on both
+`ProjectionData2D` and the workflow) — see the finding below for why it matters.
+
+Outputs are suffixed `_clean` (`comparison_2d_clean.png`, `cupping_validation_2d_clean.png`,
+`optimization_history_2d_clean.png`) plus a printed report (PMMA cupping %, per-material
+mean/std/CoV).
+
+**Plotting runs in a subprocess (`plot_clean_results.py`).** On the local conda env
+(`Tomography`) matplotlib's native rendering *hard-crashes* (silent, no traceback,
+exit `0xC06D7FFF`) once torch+astra+MKL OpenMP are loaded in the process —
+`KMP_DUPLICATE_LIB_OK` does not help. So `main_2d_clean.py` computes + prints the
+report, saves the arrays, then spawns `plot_clean_results.py` (numpy+matplotlib only)
+to draw the PNGs. If that env's matplotlib is also broken, run the plotter with a
+different interpreter: `python plot_clean_results.py --arrays _clean_arrays`.
+
+#### Finding (ran locally, ASTRA-CUDA + CPU-torch): the `μ_eff` soft-tail pathology
+The honest test surfaced **why the correction underwhelms**: the fluence-weighted
+`μ_eff = Σ_e I_e·μ(e,m) / Σ_e I_e` (README §1) is dominated by the **<20 keV soft
+spectral tail**, where μ is enormous (PMMA 146, **Al 2128 cm⁻¹ at 3 keV**) but the
+photons are *fully absorbed* in the object, so they contribute nothing to the measured
+sinogram yet dominate the correction target.
+
+At `dk=2`, kvp=120, **no added filtration** (spekpy keeps bins down to 3 keV; <20 keV =
+25% of fluence but **94–97% of the `μ_eff` numerator**):
+- `μ_eff`: PMMA **3.5**, Al **53.5 cm⁻¹** (should be ~0.25 / ~0.7) → the corrected Al
+  recon **explodes ~38×** (Al 0.021→1.0, PMMA CoV 0.16→9.8). Correction **broken**.
+
+Adding realistic tube filtration (`al_filter_mm=2.0`, an available option — **not** the
+default; §8.6's transmission fix is) drops <20 keV fluence to ~1% and restores `μ_eff`
+PMMA **0.28** / Al **1.64 cm⁻¹**:
+- Original PMMA cupping **4.1%**, corrected **−4.3%** (mild overcorrection); Al raised
+  0.021→0.031; PMMA CoV 0.094→0.152. Now **well-behaved** but only mildly corrective —
+  filtration also pre-hardens the beam, leaving little cupping to remove.
+
+**Take-aways:** (1) the fluence-weighted "thin-object initial slope" `μ_eff` is the
+*wrong* monochromatic target for thick objects / soft spectra — a
+**transmission-weighted** effective μ (or an explicit low-energy cutoff) would be far
+more robust; (2) there's a tension — filtration fixes `μ_eff` but reduces the hardening
+there is to correct, so a convincing strong-yet-physical demo needs a thicker/denser
+phantom or lighter filtration (e.g. `al_filter_mm=1.0`). The unfiltered figures are kept
+as `*_clean_unfiltered.png` for comparison.
+
+### 8.6 Fix — transmission-weighted `μ_eff` (`mu_eff_mode="transmission"`)
+Implements take-away (1) of §8.5. `ISP2D._effective_mu` (and the 3-D `ISP` mirror) now
+supports two weightings via `mu_eff_mode` (threaded through `SpectralProjection2D` and
+the workflow; **default `"fluence"` = original behaviour, so `main_2d.py`/3-D are
+unchanged**):
+
+- **`"fluence"`** (original): `μ_eff[m] = Σ_e I_e·μ(e,m) / Σ_e I_e`.
+- **`"transmission"`** (new): weight each bin by the photons that actually survive a
+  representative object path, `w_e = I_e·exp(−Σ_m μ(e,m)·L_rep[m])`, then
+  `μ_eff[m] = Σ_e w_e·μ(e,m) / Σ_e w_e`. `L_rep[m]` is the mean path through material
+  `m` over the object-intersecting rays (data-driven — no reference energy/thickness).
+  Absorbed soft photons get ~zero weight, so `μ_eff` is physical *without* filtration.
+
+**Result (local run: `dk=2`, NO filtration, ~25% hardening, `freeze_spectral`, `outer_iters=1`):**
+
+| metric | fluence (orig) | transmission (fix) |
+|---|---|---|
+| `μ_eff` Al | 53.5 cm⁻¹ | ~1.5 cm⁻¹ |
+| corrected Al recon | 1.0 (explodes ×38) | 0.027 (physical) |
+| PMMA cupping (orig→corr) | 25.3% → **977%** | 25.3% → **7.1%** |
+| PMMA CoV (orig→corr) | 0.16 → **9.8** | 0.16 → **0.11** |
+
+`main_2d_clean.py` defaults to `mu_eff_mode="transmission"`, `al_filter_mm=0.0`,
+`freeze_spectral=True`, `outer_iters=1`: it removes most of the cupping **without**
+sacrificing the hardening (cf. §8.5's filtration route, which fixed `μ_eff` but
+pre-hardened the cupping away). The residual ~7% is edge ringing + soft-mask
+segmentation (not `μ_eff`), and **more passes do not reliably reduce it** (§8.7
+outer-iters sweep). Figures kept: `*_clean.png` (the transmission fix / default),
+`*_clean_unfiltered.png` (broken fluence), `*_clean_filtered.png` (fluence + 2 mm Al),
+`*_clean_recovery.png` (honest recovery, §8.7).
+
+### 8.7 Honest recovery test (`--no-freeze --perturb`) + CLI harness
+`main_2d_clean.py` is now a CLI (argparse) covering every regime; `ISP2D` gained
+`spectral_perturb`/`spectral_perturb_seed` (threaded through the block + workflow) to
+start `I`/`mu` *away* from truth — so unfreezing actually tests recovery rather than
+sitting on the ground-truth init (README §6 caveat). The harness also reports the
+transmission `μ_eff` of the *learned* spectrum vs ground truth.
+
+| run (transmission, dk=2, **outer=3**) | freeze | perturb | corrected cupping | learned μ_eff err (PMMA / Al) |
+|---|---|---|---|---|
+| **recovery** | **no** | **±30%** | 25.3% → **2.1%** | **9.9% / 8.3%** |
+| stability | no | 0 | 25.3% → 2.0% | 9.9% / 7.8% |
+| frozen reference | yes | – | 25.3% → 9.2% | 0 (frozen at truth) |
+
+Findings (transmission mode, dk=2, no filtration):
+- **The transmission `μ_eff` is identifiable.** From a ±30% perturbed start the fit
+  recovers `μ_eff` and converges to *essentially the same solution* as starting at
+  truth (both ≈ PMMA 0.297 / Al 1.42) — because fitting `A_meas` constrains the
+  *detected-spectrum-weighted* attenuation, which is exactly the transmission `μ_eff`.
+  The individual `Iₑ`/`μₑ` are NOT uniquely recovered (118-bin degeneracy) but don't
+  need to be. The residual ~8–10% vs the `_trans_mu_eff` yardstick is a fixed offset of
+  the converged solution (identical for perturb 0 and 0.3), not a recovery failure.
+- **Unfreezing is stable** in transmission mode — no explosion / runaway drift, the
+  opposite of the fluence-mode hazard warned about in §8.3.
+
+**Outer-iters sweep — do we need the correction loop? (`--no-freeze --perturb 0.3`):**
+
+| `outer_iters` | corrected cupping | μ_eff err (PMMA / Al) |
+|---|---|---|
+| **1** | 25.3% → 4.3% | **1.2% / 1.2%** |
+| 2 | 25.3% → 8.6% | 66.9% / 29.0% |
+| 3 | 25.3% → 2.1% | 9.9% / 8.3% |
+
+The loop is **non-monotonic** once the spectrum is learned: one pass already recovers
+`μ_eff` (1.2%) and most cupping, pass 2 is *worse*, pass 3 trades `μ_eff` accuracy for
+flatter cupping. Each pass re-optimises `I`/`μ` against a *moving* segmentation target,
+so extra passes wander. **`main_2d_clean.py` now defaults to `outer_iters=1`** (faster,
+best `μ_eff`, most stable); the frozen default likewise improves 9.2% → **7.1%** cupping
+at a single pass. Use more passes only with `freeze_spectral` (segmentation-only
+refinement — no spectral wandering).
+
+CLI examples:
+```bash
+python main_2d_clean.py                                  # frozen + transmission (the fix)
+python main_2d_clean.py --no-freeze --perturb 0.3 --suffix _recovery   # honest recovery test
+python main_2d_clean.py --mu-eff-mode fluence            # the broken baseline
+```

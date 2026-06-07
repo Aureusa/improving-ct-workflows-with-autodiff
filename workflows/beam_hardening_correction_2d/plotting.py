@@ -245,3 +245,153 @@ def plot_segmentation_comparison_2d(
     if save_path is not None:
         plt.savefig(save_path, dpi=100)
     plt.close()
+
+
+# ── Clean-validation diagnostics (used by main_2d_clean.py) ───────────────────
+
+def _radial_profile_masked(image: np.ndarray, mask: np.ndarray, n_bins: int = 40):
+    """
+    Azimuthally-averaged radial profile of `image`, restricted to pixels where
+    `mask` is True. Returns (radii, profile); empty bins are NaN.
+
+    Restricting to one material's mask (e.g. PMMA) isolates that material's body
+    so beam-hardening cupping appears as a profile that rises toward the rim
+    instead of staying flat — far cleaner than the through-the-bubbles centre
+    line used elsewhere.
+    """
+    ii, jj = np.indices(image.shape)
+    c0 = (image.shape[0] - 1) / 2.0
+    c1 = (image.shape[1] - 1) / 2.0
+    r = np.sqrt((ii - c0) ** 2 + (jj - c1) ** 2)
+
+    if not mask.any():
+        return np.array([]), np.array([])
+
+    r_in = r[mask]
+    vals = image[mask]
+    bins = np.linspace(0.0, float(r_in.max()), n_bins + 1)
+    idx = np.clip(np.digitize(r_in, bins) - 1, 0, n_bins - 1)
+
+    prof = np.full(n_bins, np.nan)
+    for b in range(n_bins):
+        sel = idx == b
+        if sel.any():
+            prof[b] = vals[sel].mean()
+    centers = 0.5 * (bins[:-1] + bins[1:])
+    return centers, prof
+
+
+def compute_validation_metrics(
+    original: np.ndarray,
+    corrected: np.ndarray,
+    phantom: np.ndarray,
+    inner_frac: float = 0.3,
+    outer_frac: float = 0.3,
+) -> dict:
+    """
+    Quantify beam-hardening severity and correction quality against the
+    ground-truth phantom labels (0=air, 1=PMMA, 2=Al).
+
+    Returns
+    -------
+    dict with
+        ["materials"][name][recon] = {mean, std, cov}   recon in {original, corrected}
+        ["pmma_cupping_pct"][recon] = 100 * (rim - centre) / rim
+    A working correction drives pmma_cupping_pct toward 0 and shrinks the PMMA
+    coefficient of variation (cov = std / |mean|).
+    """
+    labels = [(0.0, "Air"), (1.0, "PMMA"), (2.0, "Al")]
+    metrics = {"materials": {}}
+
+    for label, name in labels:
+        m = phantom == label
+        if not m.any():
+            continue
+        entry = {}
+        for arr, key in [(original, "original"), (corrected, "corrected")]:
+            v = arr[m]
+            mean = float(v.mean())
+            std = float(v.std())
+            entry[key] = {
+                "mean": mean,
+                "std": std,
+                "cov": float(std / abs(mean)) if mean != 0 else float("nan"),
+            }
+        metrics["materials"][name] = entry
+
+    pmma = phantom == 1.0
+    cupping = {}
+    for arr, key in [(original, "original"), (corrected, "corrected")]:
+        _, prof = _radial_profile_masked(arr, pmma)
+        prof = prof[~np.isnan(prof)]
+        if prof.size == 0:
+            cupping[key] = float("nan")
+            continue
+        n_in = max(1, int(round(inner_frac * prof.size)))
+        n_out = max(1, int(round(outer_frac * prof.size)))
+        centre_mean = prof[:n_in].mean()
+        rim_mean = prof[-n_out:].mean()
+        cupping[key] = (
+            float(100.0 * (rim_mean - centre_mean) / rim_mean)
+            if rim_mean != 0 else float("nan")
+        )
+    metrics["pmma_cupping_pct"] = cupping
+    return metrics
+
+
+def plot_cupping_validation_2d(
+    original: np.ndarray,
+    corrected: np.ndarray,
+    phantom: np.ndarray,
+    title: str = "Clean Validation",
+    save_path: str = None,
+) -> None:
+    """
+    Two-panel cupping diagnostic:
+      1. PMMA-only radial attenuation profile (original vs corrected). Flat =
+         no cupping; a rise toward the rim = residual beam hardening.
+      2. Per-material mean ± std bar chart (lower std = more uniform material).
+    """
+    pmma = phantom == 1.0
+    r_o, p_o = _radial_profile_masked(original, pmma)
+    r_c, p_c = _radial_profile_masked(corrected, pmma)
+
+    fig, axes = plt.subplots(1, 2, figsize=(13, 5))
+    fig.suptitle(title)
+
+    ax = axes[0]
+    ax.plot(r_o, p_o, color="tab:blue", lw=1.6, label="Original (beam-hardened)")
+    ax.plot(r_c, p_c, color="tab:orange", lw=1.6, linestyle="--", label="Corrected")
+    ax.set_title("PMMA radial profile (cupping check)")
+    ax.set_xlabel("Radius from centre [pixels]")
+    ax.set_ylabel("Mean reconstructed attenuation")
+    ax.grid(True, alpha=0.3)
+    ax.legend()
+
+    ax = axes[1]
+    names = ["Air", "PMMA", "Al"]
+    labels = [0.0, 1.0, 2.0]
+    o_means, o_stds, c_means, c_stds = [], [], [], []
+    for label in labels:
+        m = phantom == label
+        o_means.append(float(original[m].mean()) if m.any() else np.nan)
+        o_stds.append(float(original[m].std()) if m.any() else np.nan)
+        c_means.append(float(corrected[m].mean()) if m.any() else np.nan)
+        c_stds.append(float(corrected[m].std()) if m.any() else np.nan)
+    x = np.arange(len(names))
+    w = 0.35
+    ax.bar(x - w / 2, o_means, w, yerr=o_stds, capsize=4,
+           color="tab:blue", alpha=0.8, label="Original")
+    ax.bar(x + w / 2, c_means, w, yerr=c_stds, capsize=4,
+           color="tab:orange", alpha=0.8, label="Corrected")
+    ax.set_xticks(x)
+    ax.set_xticklabels(names)
+    ax.set_title("Per-material mean ± std")
+    ax.set_ylabel("Reconstructed attenuation")
+    ax.grid(True, alpha=0.3, axis="y")
+    ax.legend()
+
+    plt.tight_layout()
+    if save_path is not None:
+        plt.savefig(save_path, dpi=100)
+    plt.close()

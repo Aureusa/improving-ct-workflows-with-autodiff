@@ -11,7 +11,7 @@ _DATA_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 class ISP(torch.nn.Module):
-    def __init__(self, n_angles=360, number_of_materials=2, gamma=1.0, energy_bins=358, energy_chunk_size=16, voxel_size=0.5/128, device: str = "cuda" if torch.cuda.is_available() else "cpu"):
+    def __init__(self, n_angles=360, number_of_materials=2, gamma=1.0, energy_bins=358, energy_chunk_size=16, voxel_size=0.5/128, mu_eff_mode="fluence", device: str = "cuda" if torch.cuda.is_available() else "cpu"):
         super(ISP, self).__init__()
         self.current_iter = 0
         self.n_angles = n_angles
@@ -19,6 +19,7 @@ class ISP(torch.nn.Module):
         self.energy_bins = energy_bins
         self.energy_chunk_size = energy_chunk_size
         self.voxel_size = voxel_size
+        self.mu_eff_mode = mu_eff_mode  # 'fluence' (original) | 'transmission'
         self._device = device
 
         self._t_initialized = False
@@ -113,17 +114,39 @@ class ISP(torch.nn.Module):
                 l_list.append(l_n)
 
             l = torch.stack(l_list, dim=0)  # (number_of_materials, n_pixels, n_angles, n_pixels)
-            As_n = l * self.voxel_size      # (number_of_materials, n_pixels, n_angles, n_pixels)
+            As_n = l * self.voxel_size      # (number_of_materials, n_pixels, n_angles, n_pixels)  [cm]
 
-            # Fluence-weighted effective mu: (number_of_materials,)
-            I = self.I.to(self._device)     # (energy_bins,)
-            I_sum = I.sum().clamp_min(1e-8)
-            mu_eff = (self.mu.to(self._device) * I.unsqueeze(0)).sum(dim=1) / I_sum
+            mu     = self.mu.to(self._device)   # (M, E)
+            I      = self.I.to(self._device)    # (E,)
+            mu_eff = self._effective_mu(mu, I, As_n)   # (M,)
 
             # A_mono[r,a,p] = sum_n( mu_eff[n] * As_n[n,r,a,p] )
             A_mono = torch.einsum('m,mrap->rap', mu_eff, As_n)  # (n_pixels, n_angles, n_pixels)
 
         return A_mono
+
+    def _effective_mu(self, mu, I, As_n):
+        """
+        Monochromatic-equivalent linear attenuation per material, mu_eff (M,).
+        See the 2-D ISP2D._effective_mu for the full rationale.
+
+        'fluence' (original): mu_eff[m] = Σ_e I_e·μ(e,m) / Σ_e I_e — dominated by
+            the absorbed soft spectral tail, so it can be wildly inflated.
+        'transmission': weight by detected photons through a representative object
+            path, w_e = I_e·exp(−Σ_m μ(e,m)·L_rep[m]) → physical mu_eff w/o filtration.
+        Dimension-agnostic: As_n is (M, *rays).
+        """
+        if getattr(self, "mu_eff_mode", "fluence") == "transmission":
+            total_path = As_n.sum(dim=0)
+            object_rays = total_path > 1e-6
+            if bool(object_rays.any()):
+                L_rep = As_n[:, object_rays].mean(dim=1)
+            else:
+                L_rep = As_n.reshape(As_n.shape[0], -1).mean(dim=1)
+            attn = torch.einsum("me,m->e", mu, L_rep)
+            w = I * torch.exp(-attn)
+            return (mu * w.unsqueeze(0)).sum(dim=1) / w.sum().clamp_min(1e-8)
+        return (mu * I.unsqueeze(0)).sum(dim=1) / I.sum().clamp_min(1e-8)
 
     def _s(self, x):
         """
