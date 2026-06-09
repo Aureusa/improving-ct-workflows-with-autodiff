@@ -82,6 +82,9 @@ def main():
     ap.add_argument("--correction-mode", choices=["replace", "residual"], default="replace",
                     help="'replace' = reconstruct synthetic mono sinogram; "
                          "'residual' = y_meas + (y_mono - y_poly), preserves real detail (autodiffCT).")
+    ap.add_argument("--spectrum", choices=["physical", "3bin"], default="physical",
+                    help="EXPERIMENT OPTION: 'physical' = full spekpy spectrum (~many bins); "
+                         "'3bin' = merge it to 3 super-bins (fewer DOF; pair with --correction-mode replace).")
     ap.add_argument("--freeze", action=argparse.BooleanOptionalAction, default=True,
                     help="freeze I/mu at ground truth (learn only t). --no-freeze learns I/mu too.")
     ap.add_argument("--perturb", type=float, default=0.0,
@@ -90,20 +93,18 @@ def main():
     ap.add_argument("--al-filter", type=float, default=0.0, help="added Al filtration [mm]")
     ap.add_argument("--dk", type=float, default=2.0)
     ap.add_argument("--steps", type=int, default=500)
-    ap.add_argument("--outer", type=int, default=1,
-                    help="correction passes. Default 1: the outer loop is non-monotonic "
-                         "with a learned spectrum (sweep in README §8.7) — 1 pass already "
-                         "recovers mu_eff and most cupping; extra passes can destabilise it.")
     ap.add_argument("--suffix", type=str, default="", help="suffix for output PNG names")
     args = ap.parse_args()
+    spectral_bins = 0 if args.spectrum == "physical" else 3   # 0 = full physical spectrum
 
     workflow = BeamHardeningCorrectionWorkflow2D(
-        optim_steps=args.steps, lr=0.001, outer_iters=args.outer,
+        optim_steps=args.steps, lr=0.001,
         dk=args.dk, add_gaussian_noise=0.0,
         freeze_spectral=args.freeze, mu_eff_mode=args.mu_eff_mode,
         correction_mode=args.correction_mode,
         al_filter_mm=args.al_filter,
         spectral_perturb=args.perturb, spectral_perturb_seed=args.perturb_seed,
+        spectral_bins=spectral_bins,
     )
 
     original, final, history = workflow.run()
@@ -119,9 +120,9 @@ def main():
     mu_eff_gt      = _trans_mu_eff(gt_I, gt_mu)
     mu_eff_learned = _trans_mu_eff(learned_I, learned_mu)
 
-    header = (f"mu_eff={args.mu_eff_mode} correction={args.correction_mode} "
+    header = (f"spectrum={args.spectrum} mu_eff={args.mu_eff_mode} correction={args.correction_mode} "
               f"freeze={args.freeze} perturb={args.perturb} "
-              f"dk={args.dk} al_filter={args.al_filter}mm steps={args.steps}x{args.outer}")
+              f"dk={args.dk} al_filter={args.al_filter}mm steps={args.steps}")
     _print_report(metrics, header, mu_eff_gt, mu_eff_learned)
 
     # Render in a separate (torch/astra-free) process

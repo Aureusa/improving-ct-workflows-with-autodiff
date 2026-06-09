@@ -11,7 +11,7 @@ _DATA_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 class ISP(torch.nn.Module):
-    def __init__(self, n_angles=360, number_of_materials=2, gamma=1.0, energy_bins=358, energy_chunk_size=16, voxel_size=0.5/128, mu_eff_mode="fluence", device: str = "cuda" if torch.cuda.is_available() else "cpu"):
+    def __init__(self, n_angles=360, number_of_materials=2, gamma=1.0, energy_bins=358, energy_chunk_size=16, voxel_size=0.5/128, mu_eff_mode="fluence", spectral_bins=0, device: str = "cuda" if torch.cuda.is_available() else "cpu"):
         super(ISP, self).__init__()
         self.current_iter = 0
         self.n_angles = n_angles
@@ -31,11 +31,37 @@ class ISP(torch.nn.Module):
             raise ValueError(f"mu_values.npy has shape {mu_vals.shape}, but expected ({number_of_materials}, {energy_bins})")
         if fluence_vals.shape != (energy_bins,):
             raise ValueError(f"fluence.npy has shape {fluence_vals.shape}, but expected ({energy_bins},)")
-        
+
+        # Optionally merge the full physical spectrum into `spectral_bins` super-bins
+        # (model-only; the data keeps full resolution). See 2-D ISP2D._merge_spectrum.
+        self.spectral_bins = spectral_bins
+        if spectral_bins and spectral_bins < energy_bins:
+            fluence_vals, mu_vals = self._merge_spectrum(np.array(fluence_vals), mu_vals, spectral_bins)
+            self.energy_bins = spectral_bins
+
         self._I = torch.nn.Parameter(torch.from_numpy(np.array(fluence_vals)).float(), requires_grad=True) # (energy_bins,) — spectral photon fluence
         self._mu = torch.nn.Parameter(torch.from_numpy(mu_vals).float(), requires_grad=True) # (number_of_materials, energy_bins)
         self._t = torch.nn.Parameter(torch.rand(self.number_of_materials), requires_grad=True) # (number_of_materials,)
         self._gamma = torch.nn.Parameter(torch.tensor(gamma), requires_grad=False) # (1,)
+
+    @staticmethod
+    def _merge_spectrum(fluence, mu, n_bins):
+        """Merge (E,) spectrum + (M, E) attenuations into `n_bins` contiguous super-bins:
+        total fluence + fluence-weighted representative attenuation. See 2-D ISP2D."""
+        E = fluence.shape[0]
+        edges = np.linspace(0, E, n_bins + 1).astype(int)
+        fl_m = np.zeros(n_bins, dtype=np.float64)
+        mu_m = np.zeros((mu.shape[0], n_bins), dtype=np.float64)
+        for k in range(n_bins):
+            a, b = edges[k], edges[k + 1]
+            w = fluence[a:b].astype(np.float64)
+            wsum = float(w.sum())
+            fl_m[k] = wsum
+            if wsum > 0:
+                mu_m[:, k] = (mu[:, a:b].astype(np.float64) * w[None, :]).sum(axis=1) / wsum
+            else:
+                mu_m[:, k] = mu[:, a:b].mean(axis=1)
+        return fl_m.astype(fluence.dtype), mu_m.astype(mu.dtype)
 
     def forward(self, reconstruction):
         # Ensure reconstruction is on the same device as the parameters

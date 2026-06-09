@@ -14,7 +14,7 @@ we have (closely matching the original authors' autodiffCT method, see README §
   freeze_spectral = False       learn spectrum + attenuations + thresholds (honest —
                                 no ground-truth spectrum is assumed; lstsq does not
                                 rely on the learned spectrum being exact).
-  dk = 2, add_gaussian_noise = 0, outer_iters = 1.
+  dk = 2, add_gaussian_noise = 0.
 
 Local result (this config): PMMA cupping 25.3% -> ~3%, PMMA CoV 0.16 -> 0.07.
 
@@ -72,7 +72,6 @@ if __name__ == "__main__":
     workflow = BeamHardeningCorrectionWorkflow2D(
         optim_steps=500,
         lr=0.001,
-        outer_iters=1,
         dk=2.0,                      # strong, unambiguous beam hardening
         add_gaussian_noise=0.0,      # clean demonstration (set >0 for noisy data)
         mu_eff_mode="lstsq",         # least-squares effective attenuation (autodiffCT)

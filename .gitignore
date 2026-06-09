@@ -12,7 +12,7 @@ og_work/
 # Regenerated run artifacts (recreated on every run)
 *.npy
 _arrays_3d/
-reconstruction_3d.html
+reconstruction_3d*.html
 
 # Legacy / regenerated output figures (3-D scatter + standalone phantom script)
 3d_phantom.png

@@ -47,8 +47,11 @@ material masks. Thresholds `t` are initialised by multi-Otsu and then learned.
 ## 2. Repository layout
 
 ```
-main_2d.py                         ← 2-D entry point (PRIMARY focus)
-main.py                            ← 3-D entry point (analogous)
+main_2d.py                         ← 2-D PRIMARY results runner (lstsq + residual)
+main_2d_clean.py                   ← 2-D experiment harness (CLI: --spectrum, --mu-eff-mode, …)
+main.py                            ← 3-D runner (CLI) → builds the interactive HTML viewer
+plot_clean_results.py              ← 2-D figure renderer (run in a subprocess; matplotlib)
+plot_3d_interactive.py             ← 3-D interactive plotly viewer → reconstruction_3d.html (§8.10)
 ct_autodiff/engine/                ← tiny autodiff-workflow framework
   block.py        Block     : holds Parameters; exposes them as attributes
   parameter.py    Parameter : torch.Tensor wrapper (name, trainable flag)
@@ -57,12 +60,14 @@ workflows/
   beam_hardening_correction_2d/    ← 2-D pipeline (validation target)
     workflow.py        BeamHardeningCorrectionWorkflow2D (orchestrates everything)
     blocks.py          ProjectionData2D, Reconstruct2D, CorrectProjection, SpectralProjection2D
-    isp_2d.py          ISP2D — the differentiable polychromatic model (_compute_I_sim, _s, mono)
+    isp_2d.py          ISP2D — differentiable model (_s, _compute_I_sim, _effective_mu,
+                       compute_corrected_sinogram, _merge_spectrum)
     barba_2d_phantom.py  phantom + ASTRA FP/FBP + calculate_I_2d (data generator)
     objective_func.py  PhiLoss (MSE between A_sim and A_meas)
-    plotting.py        result figures
+    plotting.py        result figures + metrics (cupping %, radial profile, CoV)
     utils.py           tanh_thresholding
-  beam_hardening_correction/       ← 3-D pipeline (same design, volumes instead of slices)
+  beam_hardening_correction/       ← 3-D pipeline (mirrors 2-D; volumes, SIRT, tilted-rod phantom)
+    isp.py · blocks.py · workflow.py · barba_3D_phantom_1.py · objective_func.py · plotting.py
 ```
 
 **Engine note:** `SpectralProjection2D(Block, ISP2D)` mixes the engine `Block`
@@ -84,21 +89,17 @@ ProjectionData2D.execute()
 Reconstruct2D.execute(A_meas)
     → original_reconstruction  (size, size)              [FBP, shows cupping]
 
-repeat outer_iters times (default 3), starting from original_reconstruction:
-    _optim_loop:  Adam fits ISP2D params (I, mu, t) so A_sim ≈ A_meas   (PhiLoss = MSE)
-                  (path lengths segmented from the *current* recon)
-    ISP2D.compute_monochromatic_sinogram(current_recon)
-        → mono sinogram (n_angles, size)                 [linearised, no hardening]
-    Reconstruct2D.execute(mono sinogram)
-        → corrected recon  (size, size)  → becomes current_recon for next pass
-
-final_reconstruction = last pass's corrected recon
+_optim_loop:  Adam fits ISP2D params (I, mu, t) so A_sim ≈ A_meas   (PhiLoss = MSE)
+              (path lengths segmented from the beam-hardened recon)
+ISP2D.compute_corrected_sinogram(recon, A_meas, correction_mode)
+    → corrected sinogram (n_angles, size)            ['replace' mono, or 'residual']
+Reconstruct2D.execute(corrected sinogram)
+    → final_reconstruction  (size, size)             [de-cupped]
 ```
 
-**Iterative correction** (`outer_iters`, default 3): each pass re-segments the
-latest (de-cupped) recon, so the path lengths driving the fit keep improving.
-Set `outer_iters=1` for the old single-pass behaviour. Only `I`, `mu`, `t` are
-optimised; the per-pass recon is otherwise treated as a fixed input.
+**Single-pass** (the iterative outer loop was removed — §8.7): the recon is segmented
+once, the fit runs, and the corrected sinogram is reconstructed. Only `I`, `mu`, `t` are
+optimised; the recon is a fixed input. (The 3-D pipeline was always single-pass.)
 
 ---
 
@@ -106,13 +107,16 @@ optimised; the per-pass recon is otherwise treated as a fixed input.
 
 ```bash
 # from the repo root
-python main_2d.py        # 2-D PRIMARY results — lstsq mu_eff + residual correction (§8.8)
-python main_2d_clean.py  # 2-D experimentation harness — CLI flags for every regime (§8.5–8.8)
-python main.py           # 3-D
+python main_2d.py                                          # 2-D results — lstsq mu_eff + residual (§8.8)
+python main_2d_clean.py [--spectrum physical|3bin] [...]   # 2-D experiment harness — every regime (§8.5–8.11)
+python main.py                                             # 3-D → builds reconstruction_3d.html (§8.10)
+python main.py --spectrum 3bin --correction-mode replace  # 3-D with the 3-bin spectrum (§8.11)
 ```
 
-Outputs are written next to the script (repo root). Paths are
-`__file__`-relative — no machine-specific paths.
+Outputs are written next to the script (repo root); paths are `__file__`-relative.
+**3-D `main.py` builds an interactive `reconstruction_3d.html`** (open in a browser — §8.10)
+and saves the reconstruction arrays to `_arrays_3d/` so the viewer can be rebuilt without
+re-running. The 2-D runners write PNGs (§5).
 
 ### Dependencies
 `requirments.txt` (note the spelling) now lists the full pip-installable set:
@@ -140,10 +144,11 @@ math and the plotting functions can still be exercised in isolation.
 
 ## 5. Output figures (what each PNG shows)
 
-> **Update (§8.8):** `main_2d.py` now writes `comparison_2d.png`, `cupping_2d.png`, and
+> **Update (§8.8/§8.10):** `main_2d.py` now writes `comparison_2d.png`, `cupping_2d.png`, and
 > `optimization_history_2d.png` (lstsq + residual config). The per-reconstruction and
 > threshold figures in the table below come from the earlier flow, still reachable via
-> `main_2d_clean.py` / the standalone phantom script.
+> `main_2d_clean.py` / the standalone phantom script. **3-D `main.py` no longer writes PNGs —
+> it builds an interactive `reconstruction_3d.html` (§8.10).**
 
 Produced by `main_2d.py`:
 
@@ -189,10 +194,8 @@ sinogram + a line profile), and `reconstruction_2d.png` (FBP + profile + phantom
   init `I`/`μ` away from truth or freeze them and learn only `t`.
 - **Threshold ordering:** `_s` sorts `t` every forward pass so the exclusive-mask
   subtraction can't go negative if Adam reorders the thresholds.
-- **Iterative correction (`outer_iters`, default 3):** each outer pass re-segments the
-  latest corrected recon and refits, so cupping-induced mis-segmentation is reduced
-  pass-over-pass. `outer_iters=1` restores the old single-pass behaviour. Total optimiser
-  steps = `optim_steps · outer_iters`.
+- **Single-pass correction:** the iterative outer loop was removed (§8.7 — it was
+  non-monotonic with a learned spectrum); the recon is segmented once and corrected.
 - **Reproducibility:** simulated-noise RNG is seeded (`ProjectionData2D.noise_seed`,
   default 0); the phantom is seeded at 69.
 
@@ -237,7 +240,7 @@ validation.**
 |------|----------|-----|
 | **Mask sharpness** | `tanh` thresholding on raw recon (~0.005–0.02); `gamma=100` never saturated → mushy masks | `_s` normalises recon to `[0,1]` and learns `t` there → `gamma=100` gives crisp masks (§6) |
 | **Learning rate** | one Adam `lr` for `I`(~1e5), `mu`(~1), `t` → `I` effectively frozen | `_build_optimizer` per-group `lr = base_lr·mean\|param\|` (uniform fractional step) |
-| **Correction passes** | single-pass: segment the beam-hardened recon once | iterative `outer_iters` (default 3): re-segment the corrected recon + refit each pass |
+| **Correction passes** | single-pass: segment the beam-hardened recon once | iterative `outer_iters` (default 3) — **later removed; back to single-pass (§8.7)** |
 | **`dk` default** | `50` → 2 energy bins, ~0.6% hardening (nothing to correct) | `10` (user-set) → realistic hardening; `dk≈1`→~69% if you want more |
 | **`[diag]` line** | — | warm-up diagnostic prints normalised thresholds + tanh transition width, warns if masks will be blurry |
 
@@ -324,7 +327,7 @@ unchanged**):
   `m` over the object-intersecting rays (data-driven — no reference energy/thickness).
   Absorbed soft photons get ~zero weight, so `μ_eff` is physical *without* filtration.
 
-**Result (local run: `dk=2`, NO filtration, ~25% hardening, `freeze_spectral`, `outer_iters=1`):**
+**Result (local run: `dk=2`, NO filtration, ~25% hardening, `freeze_spectral`):**
 
 | metric | fluence (orig) | transmission (fix) |
 |---|---|---|
@@ -334,7 +337,7 @@ unchanged**):
 | PMMA CoV (orig→corr) | 0.16 → **9.8** | 0.16 → **0.11** |
 
 `main_2d_clean.py` defaults to `mu_eff_mode="transmission"`, `al_filter_mm=0.0`,
-`freeze_spectral=True`, `outer_iters=1`: it removes most of the cupping **without**
+`freeze_spectral=True`: it removes most of the cupping **without**
 sacrificing the hardening (cf. §8.5's filtration route, which fixed `μ_eff` but
 pre-hardened the cupping away). The residual ~7% is edge ringing + soft-mask
 segmentation (not `μ_eff`), and **more passes do not reliably reduce it** (§8.7
@@ -377,10 +380,11 @@ Findings (transmission mode, dk=2, no filtration):
 The loop is **non-monotonic** once the spectrum is learned: one pass already recovers
 `μ_eff` (1.2%) and most cupping, pass 2 is *worse*, pass 3 trades `μ_eff` accuracy for
 flatter cupping. Each pass re-optimises `I`/`μ` against a *moving* segmentation target,
-so extra passes wander. **`main_2d_clean.py` now defaults to `outer_iters=1`** (faster,
-best `μ_eff`, most stable); the frozen default likewise improves 9.2% → **7.1%** cupping
-at a single pass. Use more passes only with `freeze_spectral` (segmentation-only
-refinement — no spectral wandering).
+so extra passes wander. **Given this, the outer loop was removed entirely — the pipeline is
+now single-pass** (`run()` does one fit + one correction; the 3-D pipeline always was). One
+pass already recovers `μ_eff` and most of the cupping (the frozen default lands at ~7% in a
+single pass). Git history keeps the loop if segmentation-only refinement with a *frozen*
+spectrum is ever wanted.
 
 CLI examples:
 ```bash
@@ -426,7 +430,7 @@ The residual correction is the big cupping win; lstsq gives the best material un
 
 **`main_2d.py` is now the primary results runner** — `mu_eff_mode="lstsq"`,
 `correction_mode="residual"`, `freeze_spectral=False` (honest — learns the spectrum, lstsq
-doesn't rely on it being exact), `dk=2`, noise off, `outer_iters=1`:
+doesn't rely on it being exact), `dk=2`, noise off:
 
 ```
 PMMA cupping 25.3% → 3.1%   |   PMMA CoV 0.159 → 0.066   |   Al mean preserved exactly
@@ -475,7 +479,51 @@ now converges (loss 1.77e-2 → 6.7e-6) and the correction de-cups for real:
 | Al CoV (corr) | 0.159 | **0.042** |
 
 (Masks verified aligned: Air < PMMA < Al; means preserved.) Only the two *critical* 2-D
-fixes were ported — the iterative outer loop and `freeze_spectral` are still 2-D-only (not
-needed here). A full high-iteration `main.py` run is GPU-heavy (128³, ~35 bins, SIRT-1000
-×2) and `plot_reconstruction` plots in-process — re-run it in a working-matplotlib env to
-refresh `*_reconstruction.png`; the metrics above already confirm the correction works.
+fixes were ported — `freeze_spectral` is still 2-D-only (the iterative outer loop was
+removed everywhere, §8.7). A full high-iteration `main.py` run is GPU-heavy (128³, ~35 bins, SIRT-1000 ×2).
+`main.py` now builds an interactive `reconstruction_3d.html` instead of the old static PNGs
+(§8.10), so it runs end-to-end without the matplotlib crash.
+
+### 8.10 Interactive 3-D viewer (`plot_3d_interactive.py`)
+`main.py` builds a single self-contained **`reconstruction_3d.html`** (plotly) — open it in a
+browser to:
+- **rotate / zoom** the original and corrected volumes (`go.Volume`),
+- scrub an **axial slice slider** (original | corrected), windowed to a **PMMA soft-tissue
+  range** so the cupping/streaks are visible (the full air→Al range washes them out — Al is
+  ~4× brighter than PMMA),
+- inspect the three **central orthogonal cuts**,
+- read a **difference map** (`original − corrected`) — the cleanest view of the beam-hardening
+  artifact the correction removed (the cup + inter-rod streaks),
+- compare **attenuation histograms**, the **loss curve**, and a **metrics table** (cupping %,
+  per-material mean/std/CoV).
+
+Why plotly: it is pure-Python (no native rendering), so the HTML builds **in-process without
+the matplotlib+torch+astra crash** that forced `plot_clean_results.py` into a subprocess for
+the 2-D figures. `main.py` also saves the arrays to `_arrays_3d/`, so the viewer can be rebuilt
+without re-running the pipeline: `python plot_3d_interactive.py --arrays _arrays_3d`.
+
+Aspect note: each heatmap panel anchors its y-axis to its *own* x-axis (`_square_axes`) and the
+3-D scenes use `aspectmode="data"` → square panels / cubic volumes (a single
+`update_yaxes(scaleanchor="x")` stretches panels 2..N onto the first panel's x-axis).
+
+### 8.11 Stronger-hardening phantom (tilted rods) + the `--spectrum` experiment option
+- **Tilted-rod phantom** (`barba_3D_phantom_1.render_phantom`): the Al rods are now
+  **near-vertical (45° tilt) on a ring** instead of flat horizontal cylinders (new args
+  `rod_tilt_deg`, `rod_ring_radius`). Vertical rods span the full height (Al in every slice) and
+  the tilt gives long oblique chords → **more beam hardening** (orig cupping 19% → ~29%, more
+  inter-rod streaks; Al 6.9% → 12.9% of the body).
+- **`--spectrum {physical, 3bin}`** (2-D `main_2d_clean.py`, 3-D `main.py`):
+  `ISP2D/ISP._merge_spectrum` merges the full physical spectrum into 3 contiguous super-bins
+  (total fluence + fluence-weighted representative μ). Fewer spectral DOF (more identifiable)
+  at the cost of a coarser forward model.
+
+| pipeline | physical (full bins) | 3bin (merged) |
+|---|---|---|
+| 2-D cupping (orig→corr) | 25% → 1.7% | 25% → 1.8% |
+| 3-D cupping (orig→corr) | 29% → 7.9% | 29% → 11.1% |
+
+**Pair `--spectrum 3bin` with `--correction-mode replace`.** With `residual`, 3 bins are too
+coarse to model the fine hardening (the fit floors), so the residual term injects a large error
+and the reconstruction explodes; `replace` reconstructs `y_mono` directly and stays stable
+(just leaves more residual cupping). Defaults are `physical` / the production correction
+everywhere, so nothing changes unless selected.

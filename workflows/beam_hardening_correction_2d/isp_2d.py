@@ -47,6 +47,7 @@ class ISP2D(torch.nn.Module):
         mu_eff_mode: str = "fluence",
         spectral_perturb: float = 0.0,
         spectral_perturb_seed: int = 0,
+        spectral_bins: int = 0,
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
     ):
         super(ISP2D, self).__init__()
@@ -76,6 +77,15 @@ class ISP2D(torch.nn.Module):
                 f"expected ({energy_bins},)"
             )
 
+        # Optionally MERGE the full physical spectrum into `spectral_bins` contiguous
+        # super-bins (model-only — the data keeps full resolution). Each super-bin gets
+        # the total fluence and the fluence-weighted representative attenuation. Drops
+        # the spectrum from ~E counts to a few DOF (cf. the original paper's 3-bin model).
+        self.spectral_bins = spectral_bins
+        if spectral_bins and spectral_bins < energy_bins:
+            fluence_vals, mu_vals = self._merge_spectrum(fluence_vals, mu_vals, spectral_bins)
+            self.energy_bins = spectral_bins
+
         # Learnable parameters (placeholders — actual values loaded above)
         self._I     = torch.nn.Parameter(
             torch.from_numpy(fluence_vals).float(), requires_grad=True
@@ -102,6 +112,28 @@ class ISP2D(torch.nn.Module):
         self._gamma = torch.nn.Parameter(
             torch.tensor(gamma), requires_grad=False
         )   # scalar
+
+    @staticmethod
+    def _merge_spectrum(fluence, mu, n_bins):
+        """
+        Merge a full (E,) spectrum + (M, E) attenuations into `n_bins` contiguous
+        super-bins: total fluence per super-bin, fluence-weighted representative
+        attenuation. Returns (fluence_m (n_bins,), mu_m (M, n_bins)).
+        """
+        E = fluence.shape[0]
+        edges = np.linspace(0, E, n_bins + 1).astype(int)
+        fl_m = np.zeros(n_bins, dtype=np.float64)
+        mu_m = np.zeros((mu.shape[0], n_bins), dtype=np.float64)
+        for k in range(n_bins):
+            a, b = edges[k], edges[k + 1]
+            w = fluence[a:b].astype(np.float64)
+            wsum = float(w.sum())
+            fl_m[k] = wsum
+            if wsum > 0:
+                mu_m[:, k] = (mu[:, a:b].astype(np.float64) * w[None, :]).sum(axis=1) / wsum
+            else:
+                mu_m[:, k] = mu[:, a:b].mean(axis=1)
+        return fl_m.astype(fluence.dtype), mu_m.astype(mu.dtype)
 
     # ── Forward ──────────────────────────────────────────────────────────────
 

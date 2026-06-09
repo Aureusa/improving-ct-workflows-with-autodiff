@@ -53,7 +53,6 @@ class BeamHardeningCorrectionWorkflow2D(Workflow):
     gamma              : steepness of soft thresholding in ISP2D
     size               : phantom pixel grid (size × size)
     scale              : cm per pixel  (physical_width_cm / size)
-    outer_iters        : iterative-correction passes (total steps = optim_steps * outer_iters)
     dk                 : spectrum bin width [keV] (smaller → more bins → stronger hardening)
     add_gaussian_noise : fractional Gaussian noise on the simulated sinogram (0.0 = clean)
     noise_seed         : RNG seed for the simulated noise (reproducibility)
@@ -80,7 +79,6 @@ class BeamHardeningCorrectionWorkflow2D(Workflow):
         gamma: float = 100.0,
         size: int = 256,
         scale: float = 5.0 / 256,
-        outer_iters: int = 3,
         dk: float = 10.0,
         add_gaussian_noise: float = 0.02,
         noise_seed: int = 0,
@@ -90,6 +88,7 @@ class BeamHardeningCorrectionWorkflow2D(Workflow):
         correction_mode: str = "replace",
         spectral_perturb: float = 0.0,
         spectral_perturb_seed: int = 0,
+        spectral_bins: int = 0,
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
     ):
         super().__init__()
@@ -126,13 +125,13 @@ class BeamHardeningCorrectionWorkflow2D(Workflow):
             mu_eff_mode=mu_eff_mode,
             spectral_perturb=spectral_perturb,
             spectral_perturb_seed=spectral_perturb_seed,
+            spectral_bins=spectral_bins,
             device=device,
         ))
 
         self._optim_steps = optim_steps
         self._loss_fn     = PhiLoss()
         self._lr          = lr
-        self._outer_iters = outer_iters
         self._correction_mode = correction_mode
         self._device      = device
 
@@ -173,7 +172,7 @@ class BeamHardeningCorrectionWorkflow2D(Workflow):
         final_reconstruction    : ndarray (n_pixels, n_pixels)
             FBP reconstruction from the corrected monochromatic sinogram.
         history                 : list[float]
-            Per-iteration loss values, concatenated across all outer passes.
+            Per-iteration loss values from the fit.
         """
         # Initial (uncorrected) reconstruction
         input_data  = self._input_data
@@ -184,28 +183,18 @@ class BeamHardeningCorrectionWorkflow2D(Workflow):
             torch.from_numpy(original_reconstruction).float().to(self._device)
         )
 
-        # ── Iterative correction ────────────────────────────────────────────────
-        # Each outer pass: fit ISP2D against A_meas using path lengths segmented
-        # from the *current* recon, synthesise a monochromatic sinogram, and
-        # reconstruct it. The corrected (de-cupped) recon then feeds the next
-        # pass, so the segmentation that drives the path lengths keeps improving
-        # instead of being frozen on the beam-hardened recon (single-pass).
-        history = []
-        final_reconstruction = original_reconstruction
-        for outer in range(self._outer_iters):
-            print(f"\n[outer {outer + 1}/{self._outer_iters}]")
-            history += self._optim_loop(measured_projection, current_recon)
+        # ── Single-pass correction ──────────────────────────────────────────────
+        # Fit ISP2D against A_meas using path lengths segmented from the (beam-
+        # hardened) recon, then synthesise the corrected sinogram and reconstruct it.
+        history = self._optim_loop(measured_projection, current_recon)
 
-            corrected_sino = self.SpectralProjection2D.compute_corrected_sinogram(
-                current_recon,
-                y_meas=measured_projection,
-                correction_mode=self._correction_mode,
-            )
-            correct_np           = self.CorrectProjection.execute(corrected_sino)
-            final_reconstruction = self.Reconstruct2D.execute(correct_np)
-            current_recon = (
-                torch.from_numpy(final_reconstruction).float().to(self._device)
-            )
+        corrected_sino = self.SpectralProjection2D.compute_corrected_sinogram(
+            current_recon,
+            y_meas=measured_projection,
+            correction_mode=self._correction_mode,
+        )
+        correct_np           = self.CorrectProjection.execute(corrected_sino)
+        final_reconstruction = self.Reconstruct2D.execute(correct_np)
 
         return original_reconstruction, final_reconstruction, history
 

@@ -201,6 +201,7 @@ class SpectralProjection2D(Block, ISP2D):
         mu_eff_mode: str = "fluence",
         spectral_perturb: float = 0.0,
         spectral_perturb_seed: int = 0,
+        spectral_bins: int = 0,
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
     ):
         Block.__init__(self)
@@ -214,6 +215,7 @@ class SpectralProjection2D(Block, ISP2D):
             mu_eff_mode=mu_eff_mode,
             spectral_perturb=spectral_perturb,
             spectral_perturb_seed=spectral_perturb_seed,
+            spectral_bins=spectral_bins,
             device=device,
         )
         # freeze_spectral=True → hold I and mu fixed at their ground-truth

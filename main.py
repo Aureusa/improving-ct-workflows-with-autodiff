@@ -35,11 +35,27 @@ from workflows.beam_hardening_correction.barba_3D_phantom_1 import render_phanto
 from plot_3d_interactive import build_html
 
 if __name__ == "__main__":
+    import argparse
+    ap = argparse.ArgumentParser(description="3-D beam-hardening correction + interactive viewer.")
+    ap.add_argument("--spectrum", choices=["physical", "3bin"], default="physical",
+                    help="EXPERIMENT OPTION: 'physical' = full spekpy spectrum (~35 bins at dk=5); "
+                         "'3bin' = merge to 3 super-bins (pair with --correction-mode replace).")
+    ap.add_argument("--correction-mode", choices=["replace", "residual"], default="residual",
+                    help="'residual' (default) = y_meas + (y_mono - y_poly); "
+                         "'replace' = synthetic mono sinogram (recommended for --spectrum 3bin).")
+    ap.add_argument("--mu-eff-mode", choices=["fluence", "transmission", "lstsq"], default="lstsq")
+    ap.add_argument("--steps", type=int, default=300, help="3-D is heavy (128^3 × ~35 bins)")
+    ap.add_argument("--dk", type=float, default=5.0)
+    args = ap.parse_args()
+    print(f"config: spectrum={args.spectrum}  correction={args.correction_mode}  "
+          f"mu_eff={args.mu_eff_mode}  dk={args.dk}  steps={args.steps}")
+
     workflow = BeamHardeningCorrectionWorkflow(
-        optim_steps=300,             # 3-D is heavy (128^3 × ~35 energy bins)
-        dk=5,                        # ~35 energy bins → real beam hardening (dk=50 gave ~0%) — README §8.9
-        mu_eff_mode="lstsq",         # least-squares effective attenuation (autodiffCT) — §8.8
-        correction_mode="residual",  # correct the measured sinogram: y_meas + (y_mono - y_poly) — §8.8
+        optim_steps=args.steps,
+        dk=args.dk,
+        mu_eff_mode=args.mu_eff_mode,
+        correction_mode=args.correction_mode,
+        spectral_bins=(0 if args.spectrum == "physical" else 3),
     )
 
     original, final, history = workflow.run()

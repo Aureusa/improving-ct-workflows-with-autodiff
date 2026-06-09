@@ -21,6 +21,7 @@ class BeamHardeningCorrectionWorkflow(Workflow):
             gamma=100,
             mu_eff_mode="fluence",
             correction_mode="replace",
+            spectral_bins=0,
             device: str = "cuda" if torch.cuda.is_available() else "cpu"
         ):
         super().__init__()
@@ -44,6 +45,7 @@ class BeamHardeningCorrectionWorkflow(Workflow):
             energy_bins=energy_bins,
             gamma=gamma,
             mu_eff_mode=mu_eff_mode,
+            spectral_bins=spectral_bins,
             device=device)
         )
 
