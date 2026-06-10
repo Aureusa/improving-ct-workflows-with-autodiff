@@ -37,12 +37,9 @@ from plot_3d_interactive import build_html
 if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser(description="3-D beam-hardening correction + interactive viewer.")
-    ap.add_argument("--spectrum", choices=["physical", "3bin"], default="physical",
-                    help="EXPERIMENT OPTION: 'physical' = full spekpy spectrum (~35 bins at dk=5); "
-                         "'3bin' = merge to 3 super-bins (pair with --correction-mode replace).")
     ap.add_argument("--correction-mode", choices=["replace", "residual"], default="residual",
                     help="'residual' (default) = y_meas + (y_mono - y_poly); "
-                         "'replace' = synthetic mono sinogram (recommended for --spectrum 3bin).")
+                         "'replace' = synthetic mono sinogram.")
     ap.add_argument("--mu-eff-mode", choices=["fluence", "transmission", "lstsq"], default="lstsq")
     ap.add_argument("--steps", type=int, default=300, help="3-D is heavy (128^3 x ~35 bins)")
     ap.add_argument("--dk", type=float, default=5.0)
@@ -61,7 +58,7 @@ if __name__ == "__main__":
                     help="Gaussian [vox] to denoise the recon BEFORE segmentation "
                          "(0 = off; ~1-1.5 stabilises the masks under --noise).")
     args = ap.parse_args()
-    print(f"config: spectrum={args.spectrum}  correction={args.correction_mode}  "
+    print(f"config: correction={args.correction_mode}  "
           f"mu_eff={args.mu_eff_mode}  dk={args.dk}  steps={args.steps}  "
           f"perturb={args.perturb} (seed {args.perturb_seed})  "
           f"noise={args.noise} (seed {args.noise_seed})  smooth={args.smooth}")
@@ -71,7 +68,6 @@ if __name__ == "__main__":
         dk=args.dk,
         mu_eff_mode=args.mu_eff_mode,
         correction_mode=args.correction_mode,
-        spectral_bins=(0 if args.spectrum == "physical" else 3),
         spectral_perturb=args.perturb,
         spectral_perturb_seed=args.perturb_seed,
         add_gaussian_noise=args.noise,

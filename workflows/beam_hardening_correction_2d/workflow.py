@@ -52,7 +52,6 @@ class BeamHardeningCorrectionWorkflow2D(Workflow):
         correction_mode: str = "replace",
         spectral_perturb: float = 3.0,
         spectral_perturb_seed: int = 0,
-        spectral_bins: int = 0,
         smooth_sigma: float = 0.0,
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
     ):
@@ -90,7 +89,6 @@ class BeamHardeningCorrectionWorkflow2D(Workflow):
             mu_eff_mode=mu_eff_mode,
             spectral_perturb=spectral_perturb,
             spectral_perturb_seed=spectral_perturb_seed,
-            spectral_bins=spectral_bins,
             smooth_sigma=smooth_sigma,
             device=device,
         ))

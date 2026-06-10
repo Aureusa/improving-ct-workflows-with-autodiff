@@ -60,7 +60,7 @@ workflows/
     workflow.py        BeamHardeningCorrectionWorkflow2D (orchestrates everything)
     blocks.py          ProjectionData2D, Reconstruct2D, CorrectProjection, SpectralProjection2D
     isp_2d.py          ISP2D — differentiable model (_s, _compute_I_sim, _effective_mu,
-                       compute_corrected_sinogram, _merge_spectrum)
+                       compute_corrected_sinogram)
     barba_2d_phantom.py  phantom + ASTRA FP/FBP + calculate_I_2d (data generator)
     objective_func.py  PhiLoss (MSE between A_sim and A_meas)
     plotting.py        result figures + metrics (cupping %, radial profile, CoV)
@@ -108,7 +108,6 @@ optimised; the recon is a fixed input. (The 3-D pipeline was always single-pass.
 # from the repo root
 python main_2d.py                                          # 2-D results — lstsq mu_eff + residual (§8.8)
 python main.py                                             # 3-D → builds reconstruction_3d.html (§8.10)
-python main.py --spectrum 3bin --correction-mode replace  # 3-D with the 3-bin spectrum (§8.11)
 ```
 
 Outputs are written next to the script (repo root); paths are `__file__`-relative.
@@ -495,24 +494,9 @@ Aspect note: each heatmap panel anchors its y-axis to its *own* x-axis (`_square
 3-D scenes use `aspectmode="data"` → square panels / cubic volumes (a single
 `update_yaxes(scaleanchor="x")` stretches panels 2..N onto the first panel's x-axis).
 
-### 8.11 Stronger-hardening phantom (tilted rods) + the `--spectrum` experiment option
+### 8.11 Stronger-hardening phantom (tilted rods)
 - **Tilted-rod phantom** (`barba_3D_phantom_1.render_phantom`): the Al rods are now
   **near-vertical (45° tilt) on a ring** instead of flat horizontal cylinders (new args
   `rod_tilt_deg`, `rod_ring_radius`). Vertical rods span the full height (Al in every slice) and
   the tilt gives long oblique chords → **more beam hardening** (orig cupping 19% → ~29%, more
   inter-rod streaks; Al 6.9% → 12.9% of the body).
-- **`--spectrum {physical, 3bin}`** (3-D `main.py`; 2-D via the `spectral_bins` workflow arg):
-  `ISP2D/ISP._merge_spectrum` merges the full physical spectrum into 3 contiguous super-bins
-  (total fluence + fluence-weighted representative μ). Fewer spectral DOF (more identifiable)
-  at the cost of a coarser forward model.
-
-| pipeline | physical (full bins) | 3bin (merged) |
-|---|---|---|
-| 2-D cupping (orig→corr) | 25% → 1.7% | 25% → 1.8% |
-| 3-D cupping (orig→corr) | 29% → 7.9% | 29% → 11.1% |
-
-**Pair `--spectrum 3bin` with `--correction-mode replace`.** With `residual`, 3 bins are too
-coarse to model the fine hardening (the fit floors), so the residual term injects a large error
-and the reconstruction explodes; `replace` reconstructs `y_mono` directly and stays stable
-(just leaves more residual cupping). Defaults are `physical` / the production correction
-everywhere, so nothing changes unless selected.
