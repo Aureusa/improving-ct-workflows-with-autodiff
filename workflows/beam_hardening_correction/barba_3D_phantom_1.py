@@ -21,9 +21,9 @@ def render_phantom(
     top_r: float = 0.28,
     top_z_center: float = 0.20,
     top_z_radius: float = 0.28,
-    # Rods (near-vertical, tilted, arranged on a ring → strong beam hardening)
+    # Rods (near-vertical, tilted, arranged on a ring -> strong beam hardening)
     n_cylinders: int = 6,
-    cyl_radius: float = 0.055,          # thicker rods → more Al per ray → more hardening
+    cyl_radius: float = 0.055,          # thicker rods -> more Al per ray -> more hardening
     cyl_z_range: tuple = (-0.4, 0.4),   # (kept for API compatibility; unused for tilted rods)
     rod_tilt_deg: float = 45.0,         # tilt of each rod from vertical (0=vertical, 90=horizontal)
     rod_ring_radius: float = 0.26,      # rod centres placed on a ring of this XY radius
@@ -55,7 +55,7 @@ def render_phantom(
     cyl_z_range     : (unused for tilted rods; kept for API compatibility)
     rod_tilt_deg    : tilt of each rod away from vertical (0 = vertical, 90 = horizontal).
                       Near-vertical rods span the full height (Al in every slice) and the
-                      tilt gives long oblique chords → much more beam hardening than flat rods.
+                      tilt gives long oblique chords -> much more beam hardening than flat rods.
     rod_ring_radius : rods are placed on a ring of this XY radius (inside the body)
     n_bubbles       : number of air-bubble voids
     bubble_radius   : radius of each bubble
@@ -85,7 +85,7 @@ def render_phantom(
 
     # Al rods: near-vertical, tilted, arranged on a ring. A vertical rod spans the full
     # object height (Al in every z-slice), and the tilt gives long oblique chords through
-    # the beam → much more beam hardening than the old flat (perpendicular-to-Z) rods,
+    # the beam -> much more beam hardening than the old flat (perpendicular-to-Z) rods,
     # which only intersected a thin z-band.
     tilt = np.deg2rad(rod_tilt_deg)
     angle_offset = rng.uniform(0, 2 * np.pi)
@@ -96,7 +96,7 @@ def render_phantom(
         tilt_az = rng.uniform(0, 2 * np.pi)        # azimuth the rod leans toward
         dx = np.sin(tilt) * np.cos(tilt_az)
         dy = np.sin(tilt) * np.sin(tilt_az)
-        dz = np.cos(tilt)                           # dominant Z component → near-vertical
+        dz = np.cos(tilt)                           # dominant Z component -> near-vertical
         # perpendicular distance of each voxel to the rod axis line: |(r - P0) x d|, |d| = 1
         rx, ry, rz = X - cx, Y - cy, Z
         cross_x = ry * dz - rz * dy
@@ -324,7 +324,7 @@ def plot_sinogram(sinogram, title="Sinogram"):
 Full I calculation for a polychromatic ray passing through the phantom, using the Beer-Lambert law.
 --------------------------------------------------------------------------------------------------
 """
-def calculate_I(ray,mu_pmma,mu_aluminum,phantom,scale=0.1,add_gaussian_noise=0.02):
+def calculate_I(ray,mu_pmma,mu_aluminum,phantom,scale=0.1,add_gaussian_noise=0.02,seed=None):
     pmma_part=de_bone(phantom, "pmma")
     al_part=de_bone(phantom, "aluminum")
     pmma_projection=astra_forward_project(pmma_part)
@@ -338,9 +338,11 @@ def calculate_I(ray,mu_pmma,mu_aluminum,phantom,scale=0.1,add_gaussian_noise=0.0
         p_al = al_projection * mu_aluminum[n] * scale
         I_total += I_0 * np.exp(-(p_pmma + p_al))
 
-    # Add Gaussian noise to simulate measurement imperfections
-    noise = np.random.normal(0, add_gaussian_noise * np.max(I_total), size=I_total.shape)
-    I_total += noise
+    # Add Gaussian noise to simulate measurement imperfections (seeded + clipped, mirrors 2-D).
+    # seed -> reproducible noise; clip keeps I_total > 0 so -log doesn't NaN when noise is large.
+    rng = np.random.default_rng(seed)
+    noise = rng.normal(0, add_gaussian_noise * np.max(I_total), size=I_total.shape)
+    I_total = np.clip(I_total + noise, 1e-10, None)
 
     I0_total = np.sum(fluence)
     rec = -np.log(I_total / I0_total)
@@ -407,7 +409,7 @@ def plot_reconstruction(reconstruction, title="FBP Reconstruction"):
     plt.savefig("reconstruction_slices.png", dpi=100)
     plt.close()
 
-    # 3D volume rendering — show voxels above a threshold
+    # 3D volume rendering -- show voxels above a threshold
     threshold = (reconstruction.max() + reconstruction.min()) / 2
     x, y, z = np.where(reconstruction > threshold)
     vals = reconstruction[x, y, z]
@@ -422,7 +424,7 @@ def plot_reconstruction(reconstruction, title="FBP Reconstruction"):
     plt.savefig("3d_reconstruction.png", dpi=100)
     plt.close()
 
-    # Line profile through center — this is where you see cupping
+    # Line profile through center -- this is where you see cupping
     profile = reconstruction[mid, mid, :]
     plt.figure(figsize=(8, 4))
     plt.plot(profile)

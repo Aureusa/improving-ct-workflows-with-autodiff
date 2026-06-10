@@ -1,8 +1,8 @@
 """
-main.py — 3-D entry point
+main.py -- 3-D entry point
 =========================
 Runs the 3-D beam-hardening correction (least-squares mu_eff + residual correction,
-normalized soft-segmentation + per-parameter LR — see README §8.8/§8.9) and builds an
+normalized soft-segmentation + per-parameter LR -- see README Sec 8.8/Sec 8.9) and builds an
 INTERACTIVE plotly viewer you open in a browser:
 
     reconstruction_3d.html
@@ -44,11 +44,27 @@ if __name__ == "__main__":
                     help="'residual' (default) = y_meas + (y_mono - y_poly); "
                          "'replace' = synthetic mono sinogram (recommended for --spectrum 3bin).")
     ap.add_argument("--mu-eff-mode", choices=["fluence", "transmission", "lstsq"], default="lstsq")
-    ap.add_argument("--steps", type=int, default=300, help="3-D is heavy (128^3 × ~35 bins)")
+    ap.add_argument("--steps", type=int, default=300, help="3-D is heavy (128^3 x ~35 bins)")
     ap.add_argument("--dk", type=float, default=5.0)
+    ap.add_argument("--perturb", type=float, default=0.2,
+                    help="perturb the spectral init (I and mu) away from ground truth by this "
+                         "fraction (per-bin +/-). The 3-D spectrum is always learned, so a nonzero "
+                         "value makes recovery an honest test instead of starting at the answer "
+                         "(inverse crime). The lstsq+residual correction is unaffected (rides on "
+                         "y_poly~=y_meas, not on the exact spectrum).")
+    ap.add_argument("--perturb-seed", type=int, default=0)
+    ap.add_argument("--noise", type=float, default=0.1,
+                    help="fractional Gaussian noise  on the simulated sinogram (0 = clean). "
+                         "Constant intensity noise -> hits thick rays hardest after -log.")
+    ap.add_argument("--noise-seed", type=int, default=0)
+    ap.add_argument("--smooth", type=float, default=0.0,
+                    help="Gaussian [vox] to denoise the recon BEFORE segmentation "
+                         "(0 = off; ~1-1.5 stabilises the masks under --noise).")
     args = ap.parse_args()
     print(f"config: spectrum={args.spectrum}  correction={args.correction_mode}  "
-          f"mu_eff={args.mu_eff_mode}  dk={args.dk}  steps={args.steps}")
+          f"mu_eff={args.mu_eff_mode}  dk={args.dk}  steps={args.steps}  "
+          f"perturb={args.perturb} (seed {args.perturb_seed})  "
+          f"noise={args.noise} (seed {args.noise_seed})  smooth={args.smooth}")
 
     workflow = BeamHardeningCorrectionWorkflow(
         optim_steps=args.steps,
@@ -56,6 +72,11 @@ if __name__ == "__main__":
         mu_eff_mode=args.mu_eff_mode,
         correction_mode=args.correction_mode,
         spectral_bins=(0 if args.spectrum == "physical" else 3),
+        spectral_perturb=args.perturb,
+        spectral_perturb_seed=args.perturb_seed,
+        add_gaussian_noise=args.noise,
+        noise_seed=args.noise_seed,
+        smooth_sigma=args.smooth,
     )
 
     original, final, history = workflow.run()
@@ -69,10 +90,10 @@ if __name__ == "__main__":
     np.save(os.path.join(arrays_dir, "phantom.npy"), phantom)
     np.save(os.path.join(arrays_dir, "history.npy"), np.asarray(history, dtype=np.float32))
 
-    # Build the interactive HTML (plotly is pure-Python → safe in this process)
+    # Build the interactive HTML (plotly is pure-Python -> safe in this process)
     out_html = os.path.join(_HERE, "reconstruction_3d.html")
     build_html(original, final, phantom, np.asarray(history), out_html)
 
     print("\nDone. Open in a browser:")
     print(f"  {out_html}")
-    print(f"(arrays kept in {arrays_dir} — rebuild with: python plot_3d_interactive.py --arrays _arrays_3d)")
+    print(f"(arrays kept in {arrays_dir} -- rebuild with: python plot_3d_interactive.py --arrays _arrays_3d)")

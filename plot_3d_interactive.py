@@ -1,18 +1,8 @@
 """
-plot_3d_interactive.py
-----------------------
-Interactive 3-D viewer (plotly) for the 3-D beam-hardening results. Produces ONE
-self-contained HTML you open in a browser to:
-
-  • rotate / zoom / pan the **original** and **corrected** reconstructions in 3-D,
-  • scrub an **axial slice** slider (original | corrected side by side),
-  • inspect the three **central orthogonal cuts** (axial / coronal / sagittal),
-  • read **profiles** (central line + PMMA radial = cupping),
-  • compare **attenuation histograms** (sharper material peaks after correction),
-  • see the **loss curve** and a **metrics table** (cupping %, per-material mean/std/CoV).
-
-Standalone — numpy + plotly only (no torch/astra), so it can rebuild the viewer from
-saved arrays with any interpreter:
+plot_3d_interactive.py -- interactive plotly viewer for the 3-D results. Produces one
+self-contained HTML: 3-D original/corrected volumes, axial-slice slider, central
+orthogonal cuts, profiles (centre line + PMMA radial cupping), attenuation histograms,
+loss curve, and a metrics table. Standalone (numpy + plotly only):
 
     python plot_3d_interactive.py --arrays _arrays_3d --out reconstruction_3d.html
 """
@@ -23,7 +13,7 @@ import os
 import numpy as np
 
 
-# ── metrics helpers ───────────────────────────────────────────────────────────
+# -- metrics helpers -----------------------------------------------------------
 
 def _radial_profile(arr, mask, n_bins=30):
     """Mean of `arr` over `mask` voxels, binned by 3-D radius from the volume centre."""
@@ -82,14 +72,13 @@ def _metrics_table_html(rows, cup):
     return "".join(h)
 
 
-# ── figure builder ────────────────────────────────────────────────────────────
+# -- figure builder ------------------------------------------------------------
 
 def _square_axes(fig, n_panels):
     """
-    Make heatmap panels render square. A single `update_yaxes(scaleanchor='x')`
-    wrongly anchors EVERY y-axis to the first panel's x-axis (x1) → panels 2..N get
-    stretched. This anchors each subplot's y-axis to its OWN x-axis (x, x2, x3, …)
-    and constrains to the cell domain so the image is letterboxed, not distorted.
+    Make heatmap panels render square. A blanket update_yaxes(scaleanchor='x') wrongly
+    anchors every y-axis to panel 1's x-axis -> panels 2..N stretch; instead anchor each
+    y-axis to its own x-axis and constrain to the cell domain (letterbox, not distort).
     """
     for i in range(1, n_panels + 1):
         sfx = "" if i == 1 else str(i)
@@ -123,11 +112,11 @@ def build_html(original, corrected, phantom, history, out_path, vol_stride=2, n_
     fig3d.add_trace(vol(original), 1, 1)
     fig3d.add_trace(vol(corrected), 1, 2)
     fig3d.update_layout(height=620, margin=dict(l=0, r=0, t=40, b=0),
-                        title="3-D reconstructions — drag to rotate, scroll to zoom",
+                        title="3-D reconstructions -- drag to rotate, scroll to zoom",
                         scene=dict(aspectmode="data"), scene2=dict(aspectmode="data"))
 
     # Soft-tissue window centred on PMMA so the subtle cupping/streaks show. The full
-    # air→Al range washes them out (Al is ~4x brighter) — the main reason 3-D "looks
+    # air->Al range washes them out (Al is ~4x brighter) -- the main reason 3-D "looks
     # flat" vs the 2-D profiles. Al saturates white in this window (that's fine).
     if phantom is not None and (phantom == 1.0).any():
         pm = original[phantom == 1.0]
@@ -149,7 +138,7 @@ def build_html(original, corrected, phantom, history, out_path, vol_stride=2, n_
         vis = [False] * (2 * len(idxs)); vis[2 * i] = True; vis[2 * i + 1] = True
         steps.append(dict(method="update", args=[{"visible": vis}], label=str(int(z))))
     figS.update_layout(height=470,
-                       title="Axial slice explorer (PMMA soft-tissue window; Al saturates) — drag the slider",
+                       title="Axial slice explorer (PMMA soft-tissue window; Al saturates) -- drag the slider",
                        sliders=[dict(active=mid, steps=steps, currentvalue={"prefix": "axial z = "})])
     _square_axes(figS, 2)
 
@@ -161,7 +150,7 @@ def build_html(original, corrected, phantom, history, out_path, vol_stride=2, n_
         for c_i, sl in enumerate((src[:, :, cz].T, src[:, cy, :].T, src[cx, :, :].T)):
             figC.add_trace(go.Heatmap(z=sl, zmin=vmin, zmax=vmax, colorscale="Gray", showscale=False),
                            r_i + 1, c_i + 1)
-    figC.update_layout(height=620, title="Central cuts — original (top) vs corrected (bottom)")
+    figC.update_layout(height=620, title="Central cuts -- original (top) vs corrected (bottom)")
     _square_axes(figC, 6)
 
     # 3b) beam-hardening artifact = original - corrected (THE clearest view of the cup + streaks)
@@ -173,7 +162,7 @@ def build_html(original, corrected, phantom, history, out_path, vol_stride=2, n_
     for c_i, sl in enumerate((diff[:, :, cz].T, diff[:, cy, :].T, diff[cx, :, :].T)):
         figD.add_trace(go.Heatmap(z=sl, zmin=-dabs, zmax=dabs, zmid=0, colorscale="RdBu",
                                   reversescale=True, showscale=(c_i == 2)), 1, c_i + 1)
-    figD.update_layout(height=360, title="Beam-hardening artifact = original − corrected "
+    figD.update_layout(height=360, title="Beam-hardening artifact = original - corrected "
                        "(the cup + streaks the correction removed; flat/white = no artifact)")
     _square_axes(figD, 3)
 
@@ -191,7 +180,7 @@ def build_html(original, corrected, phantom, history, out_path, vol_stride=2, n_
                                   line=dict(color="orange", dash="dash")), 1, 2)
     figP.update_layout(height=400, title="Profiles (flat corrected PMMA radial = cupping removed)")
 
-    # 5) attenuation histogram of OBJECT voxels (pre-binned → small HTML)
+    # 5) attenuation histogram of OBJECT voxels (pre-binned -> small HTML)
     obj = (phantom > 0) if phantom is not None else np.ones_like(original, dtype=bool)
     lo, hi = vmin, vmax
     oh, edges = np.histogram(original[obj], bins=120, range=(lo, hi))
@@ -224,9 +213,9 @@ def build_html(original, corrected, phantom, history, out_path, vol_stride=2, n_
     ]
     html = (
         "<html><head><meta charset='utf-8'>"
-        "<title>3-D Beam-Hardening Correction — interactive</title></head>"
+        "<title>3-D Beam-Hardening Correction -- interactive</title></head>"
         "<body style='font-family:sans-serif;max-width:1300px;margin:24px auto;padding:0 12px'>"
-        "<h1>3-D Beam-Hardening Correction — interactive results</h1>"
+        "<h1>3-D Beam-Hardening Correction -- interactive results</h1>"
         "<p>lstsq &mu;<sub>eff</sub> + residual correction. Drag the 3-D views to rotate; "
         "use the slider to scrub slices.</p>"
         + table + "".join(parts) + "</body></html>"

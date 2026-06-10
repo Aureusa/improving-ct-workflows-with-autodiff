@@ -4,13 +4,12 @@ plot_clean_results.py
 Render the clean-validation figures from saved arrays, in a process that imports
 ONLY numpy + matplotlib (NO torch / astra).
 
-main_2d_clean.py runs this as a subprocess because matplotlib's native rendering
-hard-crashes (silent, no Python traceback) when the torch + astra + MKL OpenMP
-runtimes are loaded in the same process on this conda/Windows box —
-KMP_DUPLICATE_LIB_OK does not prevent it. Plotting in a fresh, torch/astra-free
-process side-steps the conflict. It also works standalone for re-plotting:
+main_2d.py runs this as a subprocess because matplotlib hard-crashes (silent, no
+traceback) when torch + astra + MKL OpenMP are loaded in one process on this
+conda/Windows box (KMP_DUPLICATE_LIB_OK does not help). A fresh torch/astra-free
+process side-steps it. Standalone re-plot:
 
-    python plot_clean_results.py --arrays _clean_arrays --out .
+    python plot_clean_results.py --arrays _arrays_main --out .
 
 Reads : <arrays>/{original,corrected,phantom,history}.npy
 Writes: <out>/{optimization_history_2d_clean,comparison_2d_clean,cupping_validation_2d_clean}.png
@@ -71,14 +70,14 @@ def main():
     # Side-by-side comparison
     plot_comparison_2d(
         original, corrected, phantom=phantom,
-        title=f"Beam-Hardening Correction — 2-D Barba Phantom{(' ' + sfx) if sfx else ''}",
+        title=f"Beam-Hardening Correction -- 2-D Barba Phantom{(' ' + sfx) if sfx else ''}",
         save_path=comp_path,
     )
 
     # Cupping diagnostics (PMMA radial profile + per-material uniformity)
     plot_cupping_validation_2d(
         original, corrected, phantom=phantom,
-        title="Cupping Validation — PMMA radial profile + material uniformity",
+        title="Cupping Validation -- PMMA radial profile + material uniformity",
         save_path=cupp_path,
     )
 

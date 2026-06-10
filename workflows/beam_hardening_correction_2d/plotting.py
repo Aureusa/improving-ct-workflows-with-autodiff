@@ -10,17 +10,7 @@ def plot_reconstruction_2d(
     title: str = "Reconstruction",
     save_path: str = None,
 ) -> None:
-    """
-    Visualise a 2-D reconstruction with three panels:
-      1. imshow of the slice
-      2. Horizontal centre-line profile (reveals the beam-hardening cupping)
-
-    Parameters
-    ----------
-    reconstruction : float32 ndarray (n_pixels, n_pixels)
-    title          : figure title
-    save_path      : if given, save the figure to this path
-    """
+    """Show a 2-D reconstruction: imshow + horizontal centre-line profile (reveals cupping)."""
     mid = reconstruction.shape[0] // 2
 
     fig, axes = plt.subplots(1, 2, figsize=(10, 4))
@@ -50,17 +40,8 @@ def plot_comparison_2d(
     save_path: str = None,
 ) -> None:
     """
-    Side-by-side comparison of original (beam-hardened) and corrected reconstructions,
-    optionally alongside the ground-truth phantom.
-
-    Parameters
-    ----------
-    original  : float32 ndarray (n_pixels, n_pixels)
-    corrected : float32 ndarray (n_pixels, n_pixels)
-    phantom   : float32 ndarray (n_pixels, n_pixels), optional
-        Material-label array (0 = air, 1 = PMMA, 2 = Al).
-        When supplied a fourth image panel is added and the phantom centre-line
-        is overlaid on the profiles plot using a right-hand y-axis.
+    Side-by-side original (beam-hardened) vs corrected reconstructions, optionally with
+    the ground-truth phantom (adds a 4th panel + overlays the phantom centre-line).
     """
     from matplotlib.colors import ListedColormap
 
@@ -74,7 +55,7 @@ def plot_comparison_2d(
 
     col = 0  # running column index
 
-    # ── Phantom image (optional) ──────────────────────────────────────────────
+    # -- Phantom image (optional) ----------------------------------------------
     if phantom is not None:
         cmap_gt = ListedColormap(["#1a1a2e", "#4e9af1", "#f4a261"])
         axes[col].imshow(
@@ -85,7 +66,7 @@ def plot_comparison_2d(
         axes[col].axis("off")
         col += 1
 
-    # ── Reconstruction images ─────────────────────────────────────────────────
+    # -- Reconstruction images -------------------------------------------------
     axes[col].imshow(original.T, origin="lower", cmap="gray", vmin=vmin, vmax=vmax)
     axes[col].set_title("Original (beam-hardened)")
     axes[col].axis("off")
@@ -96,7 +77,7 @@ def plot_comparison_2d(
     axes[col].axis("off")
     col += 1
 
-    # ── Centre-line profiles ──────────────────────────────────────────────────
+    # -- Centre-line profiles --------------------------------------------------
     ax_att = axes[col]
     ax_att.plot(original[mid],  label="Original",  lw=1.2, color="tab:blue")
     ax_att.plot(corrected[mid], label="Corrected", lw=1.2, color="tab:orange", linestyle="--")
@@ -138,23 +119,9 @@ def plot_segmentation_comparison_2d(
     save_path: str = None,
 ) -> None:
     """
-    Apply the learned ISP thresholds as hard cuts to both the beam-hardened
-    and corrected reconstructions and plot the resulting segmentations
-    side-by-side so the effect of beam hardening is clearly visible.
-
-    Parameters
-    ----------
-    original   : float32 ndarray (n_pixels, n_pixels)
-        FBP reconstruction from the polychromatic (beam-hardened) sinogram.
-    corrected  : float32 ndarray (n_pixels, n_pixels)
-        FBP reconstruction from the corrected monochromatic sinogram.
-    thresholds : ndarray (M,)
-        Learned threshold values from ISP2D (e.g. shape (2,) for air/PMMA/Al).
-        Will be sorted before use.
-    phantom    : float32 ndarray (n_pixels, n_pixels), optional
-        Ground-truth material-label array (0=air, 1=PMMA, 2=Al).
-    title      : str
-    save_path  : str, optional
+    Hard-segment the original (beam-hardened) and corrected reconstructions with the
+    learned ISP thresholds and plot them side-by-side so the BH effect is visible.
+    thresholds (M,) are sorted before use; phantom (optional) is the ground-truth labels.
     """
     from matplotlib.colors import ListedColormap, BoundaryNorm
     from matplotlib.patches import Patch
@@ -163,7 +130,7 @@ def plot_segmentation_comparison_2d(
     n_labels   = len(thresholds) + 1          # e.g. 3 for 2 thresholds
     vmin, vmax = -0.5, n_labels - 0.5        # noqa: F841
 
-    # Hard segmentation via digitize: result is 0 … n_labels-1
+    # Hard segmentation via digitize: result is 0 ... n_labels-1
     seg_orig = np.digitize(original,  thresholds).astype(int)
     seg_corr = np.digitize(corrected, thresholds).astype(int)
 
@@ -181,7 +148,7 @@ def plot_segmentation_comparison_2d(
 
     col = 0
 
-    # ── Ground-truth phantom (optional) ──────────────────────────────────────
+    # -- Ground-truth phantom (optional) --------------------------------------
     if phantom is not None:
         axes[col].imshow(
             phantom.T, origin="lower", cmap=cmap_seg, norm=norm_seg,
@@ -192,7 +159,7 @@ def plot_segmentation_comparison_2d(
         axes[col].axis("off")
         col += 1
 
-    # ── Segmentation: original (beam-hardened) ────────────────────────────────
+    # -- Segmentation: original (beam-hardened) --------------------------------
     axes[col].imshow(
         seg_orig.T, origin="lower", cmap=cmap_seg, norm=norm_seg,
         interpolation="nearest",
@@ -202,7 +169,7 @@ def plot_segmentation_comparison_2d(
     axes[col].axis("off")
     col += 1
 
-    # ── Segmentation: corrected ───────────────────────────────────────────────
+    # -- Segmentation: corrected -----------------------------------------------
     axes[col].imshow(
         seg_corr.T, origin="lower", cmap=cmap_seg, norm=norm_seg,
         interpolation="nearest",
@@ -212,7 +179,7 @@ def plot_segmentation_comparison_2d(
     axes[col].axis("off")
     col += 1
 
-    # ── Centre-line material-label profiles ───────────────────────────────────
+    # -- Centre-line material-label profiles -----------------------------------
     ax = axes[col]
     if phantom is not None:
         ax.step(
@@ -247,17 +214,13 @@ def plot_segmentation_comparison_2d(
     plt.close()
 
 
-# ── Clean-validation diagnostics (used by main_2d_clean.py) ───────────────────
+# -- Clean-validation diagnostics (used by plot_clean_results.py) --------------
 
 def _radial_profile_masked(image: np.ndarray, mask: np.ndarray, n_bins: int = 40):
     """
-    Azimuthally-averaged radial profile of `image`, restricted to pixels where
-    `mask` is True. Returns (radii, profile); empty bins are NaN.
-
-    Restricting to one material's mask (e.g. PMMA) isolates that material's body
-    so beam-hardening cupping appears as a profile that rises toward the rim
-    instead of staying flat — far cleaner than the through-the-bubbles centre
-    line used elsewhere.
+    Azimuthally-averaged radial profile of `image` over `mask` pixels; (radii, profile),
+    empty bins NaN. Restricting to one material (e.g. PMMA) isolates cupping (profile rises
+    toward the rim) far more cleanly than a through-the-bubbles centre line.
     """
     ii, jj = np.indices(image.shape)
     c0 = (image.shape[0] - 1) / 2.0
@@ -289,16 +252,9 @@ def compute_validation_metrics(
     outer_frac: float = 0.3,
 ) -> dict:
     """
-    Quantify beam-hardening severity and correction quality against the
-    ground-truth phantom labels (0=air, 1=PMMA, 2=Al).
-
-    Returns
-    -------
-    dict with
-        ["materials"][name][recon] = {mean, std, cov}   recon in {original, corrected}
-        ["pmma_cupping_pct"][recon] = 100 * (rim - centre) / rim
-    A working correction drives pmma_cupping_pct toward 0 and shrinks the PMMA
-    coefficient of variation (cov = std / |mean|).
+    Quantify BH severity/correction vs phantom labels (0=air, 1=PMMA, 2=Al). Returns
+    {"materials"[name][recon]={mean,std,cov}, "pmma_cupping_pct"[recon]=100*(rim-centre)/rim}.
+    A good correction drives cupping toward 0 and lowers the PMMA CoV.
     """
     labels = [(0.0, "Air"), (1.0, "PMMA"), (2.0, "Al")]
     metrics = {"materials": {}}
@@ -350,7 +306,7 @@ def plot_cupping_validation_2d(
     Two-panel cupping diagnostic:
       1. PMMA-only radial attenuation profile (original vs corrected). Flat =
          no cupping; a rise toward the rim = residual beam hardening.
-      2. Per-material mean ± std bar chart (lower std = more uniform material).
+      2. Per-material mean +/- std bar chart (lower std = more uniform material).
     """
     pmma = phantom == 1.0
     r_o, p_o = _radial_profile_masked(original, pmma)
@@ -386,7 +342,7 @@ def plot_cupping_validation_2d(
            color="tab:orange", alpha=0.8, label="Corrected")
     ax.set_xticks(x)
     ax.set_xticklabels(names)
-    ax.set_title("Per-material mean ± std")
+    ax.set_title("Per-material mean +/- std")
     ax.set_ylabel("Reconstructed attenuation")
     ax.grid(True, alpha=0.3, axis="y")
     ax.legend()

@@ -22,12 +22,17 @@ class BeamHardeningCorrectionWorkflow(Workflow):
             mu_eff_mode="fluence",
             correction_mode="replace",
             spectral_bins=0,
+            spectral_perturb=0.0,
+            spectral_perturb_seed=0,
+            add_gaussian_noise=0.0,
+            noise_seed=0,
+            smooth_sigma=0.0,
             device: str = "cuda" if torch.cuda.is_available() else "cpu"
         ):
         super().__init__()
-        # dk sets the spectral resolution. dk=50 → ~3 bins → ~0% hardening (nothing to
-        # correct, original≡final). dk=5 → ~35 bins → real hardening (see README §8.9).
-        self.add_block(ProjectionData(dk=dk))
+        # dk sets the spectral resolution. dk=50 -> ~3 bins -> ~0% hardening (nothing to
+        # correct, original==final). dk=5 -> ~35 bins -> real hardening (see README Sec 8.9).
+        self.add_block(ProjectionData(dk=dk, add_gaussian_noise=add_gaussian_noise, noise_seed=noise_seed))
         # Execute the ProjectionData block to get the measured sinogram; it also writes
         # energy_bins.npy / fluence.npy / mu_values.npy used to seed the ISP block.
         self._input_data = self.ProjectionData.execute()
@@ -46,6 +51,9 @@ class BeamHardeningCorrectionWorkflow(Workflow):
             gamma=gamma,
             mu_eff_mode=mu_eff_mode,
             spectral_bins=spectral_bins,
+            spectral_perturb=spectral_perturb,
+            spectral_perturb_seed=spectral_perturb_seed,
+            smooth_sigma=smooth_sigma,
             device=device)
         )
 
@@ -63,8 +71,8 @@ class BeamHardeningCorrectionWorkflow(Workflow):
         """
         Adam with per-parameter learning rates scaled by each parameter's own
         magnitude, so every group takes ~`lr` *fractional* steps per iteration.
-        I (~1e5 photons), mu (~1 cm⁻¹) and t span many orders of magnitude; a single
-        absolute lr leaves I effectively frozen while t moves. (2-D §8.3 fix, ported.)
+        I (~1e5 photons), mu (~1 cm^-1) and t span many orders of magnitude; a single
+        absolute lr leaves I effectively frozen while t moves. (2-D Sec 8.3 fix, ported.)
         """
         groups = []
         for name, p in self.parameters():
@@ -91,7 +99,7 @@ class BeamHardeningCorrectionWorkflow(Workflow):
         # Convert original_reconstruction to torch tensor for optimization
         original_reconstruction_tensor = torch.from_numpy(original_reconstruction).float().to(self._device)
         
-        # Optimization loop — fits ISP parameters so the model matches the measured sinogram
+        # Optimization loop -- fits ISP parameters so the model matches the measured sinogram
         history = self._optim_loop(measured_projection, original_reconstruction_tensor)
 
         # After optimisation, compute a monochromatic-equivalent sinogram using the
@@ -108,7 +116,7 @@ class BeamHardeningCorrectionWorkflow(Workflow):
             
     def _optim_loop(self, input_data, reconstructed_data):
         history = []
-        A_meas = input_data # (n_pixels, n_angles, n_pixels)  — ASTRA parallel3d layout
+        A_meas = input_data # (n_pixels, n_angles, n_pixels)  -- ASTRA parallel3d layout
 
         # Warmup forward pass: triggers Otsu initialization of t so it is added
         # to _params before the optimizer is (re)built.

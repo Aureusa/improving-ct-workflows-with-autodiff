@@ -48,7 +48,6 @@ material masks. Thresholds `t` are initialised by multi-Otsu and then learned.
 
 ```
 main_2d.py                         ← 2-D PRIMARY results runner (lstsq + residual)
-main_2d_clean.py                   ← 2-D experiment harness (CLI: --spectrum, --mu-eff-mode, …)
 main.py                            ← 3-D runner (CLI) → builds the interactive HTML viewer
 plot_clean_results.py              ← 2-D figure renderer (run in a subprocess; matplotlib)
 plot_3d_interactive.py             ← 3-D interactive plotly viewer → reconstruction_3d.html (§8.10)
@@ -108,7 +107,6 @@ optimised; the recon is a fixed input. (The 3-D pipeline was always single-pass.
 ```bash
 # from the repo root
 python main_2d.py                                          # 2-D results — lstsq mu_eff + residual (§8.8)
-python main_2d_clean.py [--spectrum physical|3bin] [...]   # 2-D experiment harness — every regime (§8.5–8.11)
 python main.py                                             # 3-D → builds reconstruction_3d.html (§8.10)
 python main.py --spectrum 3bin --correction-mode replace  # 3-D with the 3-bin spectrum (§8.11)
 ```
@@ -146,8 +144,8 @@ math and the plotting functions can still be exercised in isolation.
 
 > **Update (§8.8/§8.10):** `main_2d.py` now writes `comparison_2d.png`, `cupping_2d.png`, and
 > `optimization_history_2d.png` (lstsq + residual config). The per-reconstruction and
-> threshold figures in the table below come from the earlier flow, still reachable via
-> `main_2d_clean.py` / the standalone phantom script. **3-D `main.py` no longer writes PNGs —
+> threshold figures in the table below come from the earlier flow (the standalone phantom
+> script). **3-D `main.py` no longer writes PNGs —
 > it builds an interactive `reconstruction_3d.html` (§8.10).**
 
 Produced by `main_2d.py`:
@@ -253,9 +251,9 @@ validation.**
   `plotly` (used by 3-D phantom + notebook); documented `astra-toolbox` as conda-only.
 - **`README.md`:** this file — created as the canonical re-priming summary.
 
-### 8.5 Clean-validation harness (`main_2d_clean.py`)
-A separate 2-D entry point that runs the pipeline as an *honest* test, removing the
-confounders flagged in §6 so "did the correction work?" gets a readable answer:
+### 8.5 Clean validation + the mu_eff soft-tail fix
+The pipeline was validated as an *honest* test, removing the confounders flagged in §6
+so "did the correction work?" gets a readable answer:
 - `add_gaussian_noise=0.0` — noise no longer buries the cupping bowl.
 - `dk=2.0` — strong, unambiguous beam hardening.
 - `freeze_spectral=True` — `I`/`mu` held at ground truth; only the segmentation
@@ -275,17 +273,16 @@ Supporting changes (all backward-compatible — `main_2d.py` is unchanged):
 Supporting changes also include `al_filter_mm` (added Al tube filtration, on both
 `ProjectionData2D` and the workflow) — see the finding below for why it matters.
 
-Outputs are suffixed `_clean` (`comparison_2d_clean.png`, `cupping_validation_2d_clean.png`,
-`optimization_history_2d_clean.png`) plus a printed report (PMMA cupping %, per-material
-mean/std/CoV).
+`main_2d.py` prints a quantitative report (PMMA cupping %, per-material mean/std/CoV)
+alongside the PNGs.
 
 **Plotting runs in a subprocess (`plot_clean_results.py`).** On the local conda env
 (`Tomography`) matplotlib's native rendering *hard-crashes* (silent, no traceback,
 exit `0xC06D7FFF`) once torch+astra+MKL OpenMP are loaded in the process —
-`KMP_DUPLICATE_LIB_OK` does not help. So `main_2d_clean.py` computes + prints the
+`KMP_DUPLICATE_LIB_OK` does not help. So `main_2d.py` computes + prints the
 report, saves the arrays, then spawns `plot_clean_results.py` (numpy+matplotlib only)
 to draw the PNGs. If that env's matplotlib is also broken, run the plotter with a
-different interpreter: `python plot_clean_results.py --arrays _clean_arrays`.
+different interpreter: `python plot_clean_results.py --arrays _arrays_main`.
 
 #### Finding (ran locally, ASTRA-CUDA + CPU-torch): the `μ_eff` soft-tail pathology
 The honest test surfaced **why the correction underwhelms**: the fluence-weighted
@@ -311,8 +308,7 @@ PMMA **0.28** / Al **1.64 cm⁻¹**:
 **transmission-weighted** effective μ (or an explicit low-energy cutoff) would be far
 more robust; (2) there's a tension — filtration fixes `μ_eff` but reduces the hardening
 there is to correct, so a convincing strong-yet-physical demo needs a thicker/denser
-phantom or lighter filtration (e.g. `al_filter_mm=1.0`). The unfiltered figures are kept
-as `*_clean_unfiltered.png` for comparison.
+phantom or lighter filtration (e.g. `al_filter_mm=1.0`).
 
 ### 8.6 Fix — transmission-weighted `μ_eff` (`mu_eff_mode="transmission"`)
 Implements take-away (1) of §8.5. `ISP2D._effective_mu` (and the 3-D `ISP` mirror) now
@@ -336,20 +332,18 @@ unchanged**):
 | PMMA cupping (orig→corr) | 25.3% → **977%** | 25.3% → **7.1%** |
 | PMMA CoV (orig→corr) | 0.16 → **9.8** | 0.16 → **0.11** |
 
-`main_2d_clean.py` defaults to `mu_eff_mode="transmission"`, `al_filter_mm=0.0`,
-`freeze_spectral=True`: it removes most of the cupping **without**
+The transmission `mu_eff` (with `al_filter_mm=0.0`, `freeze_spectral=True`)
+removes most of the cupping **without**
 sacrificing the hardening (cf. §8.5's filtration route, which fixed `μ_eff` but
 pre-hardened the cupping away). The residual ~7% is edge ringing + soft-mask
 segmentation (not `μ_eff`), and **more passes do not reliably reduce it** (§8.7
-outer-iters sweep). Figures kept: `*_clean.png` (the transmission fix / default),
-`*_clean_unfiltered.png` (broken fluence), `*_clean_filtered.png` (fluence + 2 mm Al),
-`*_clean_recovery.png` (honest recovery, §8.7).
+outer-iters sweep).
 
-### 8.7 Honest recovery test (`--no-freeze --perturb`) + CLI harness
-`main_2d_clean.py` is now a CLI (argparse) covering every regime; `ISP2D` gained
-`spectral_perturb`/`spectral_perturb_seed` (threaded through the block + workflow) to
+### 8.7 Honest recovery test (`spectral_perturb`)
+`ISP2D` gained `spectral_perturb`/`spectral_perturb_seed` (threaded through the block +
+workflow) to
 start `I`/`mu` *away* from truth — so unfreezing actually tests recovery rather than
-sitting on the ground-truth init (README §6 caveat). The harness also reports the
+sitting on the ground-truth init (README §6 caveat). We also compare the
 transmission `μ_eff` of the *learned* spectrum vs ground truth.
 
 | run (transmission, dk=2, **outer=3**) | freeze | perturb | corrected cupping | learned μ_eff err (PMMA / Al) |
@@ -386,12 +380,8 @@ pass already recovers `μ_eff` and most of the cupping (the frozen default lands
 single pass). Git history keeps the loop if segmentation-only refinement with a *frozen*
 spectrum is ever wanted.
 
-CLI examples:
-```bash
-python main_2d_clean.py                                  # frozen + transmission (the fix)
-python main_2d_clean.py --no-freeze --perturb 0.3 --suffix _recovery   # honest recovery test
-python main_2d_clean.py --mu-eff-mode fluence            # the broken baseline
-```
+These regimes are selected via the `BeamHardeningCorrectionWorkflow2D` config in
+`main_2d.py` (`mu_eff_mode`, `freeze_spectral`, `spectral_perturb`).
 
 ### 8.8 Closing the gap to the original authors (`og_work/`) — least-squares `μ_eff` + residual correction
 `og_work/` is the original authors' `autodiffCT` codebase. Reading `og_work/autodiffCT/ISP.py`
@@ -437,8 +427,7 @@ PMMA cupping 25.3% → 3.1%   |   PMMA CoV 0.159 → 0.066   |   Al mean preserv
 ```
 
 It writes `comparison_2d.png`, `cupping_2d.png`, `optimization_history_2d.png` (via the
-`plot_clean_results.py` subprocess) and prints the report. `main_2d_clean.py` remains the
-flag-driven harness (now with `--mu-eff-mode lstsq` and `--correction-mode residual`).
+`plot_clean_results.py` subprocess) and prints the report.
 
 ### 8.9 3-D fix — two bugs: ~0% hardening, *and* a broken segmentation/optimizer
 `main.py` was producing `original_reconstruction.png` ≡ `final_reconstruction.png`
@@ -512,7 +501,7 @@ Aspect note: each heatmap panel anchors its y-axis to its *own* x-axis (`_square
   `rod_tilt_deg`, `rod_ring_radius`). Vertical rods span the full height (Al in every slice) and
   the tilt gives long oblique chords → **more beam hardening** (orig cupping 19% → ~29%, more
   inter-rod streaks; Al 6.9% → 12.9% of the body).
-- **`--spectrum {physical, 3bin}`** (2-D `main_2d_clean.py`, 3-D `main.py`):
+- **`--spectrum {physical, 3bin}`** (3-D `main.py`; 2-D via the `spectral_bins` workflow arg):
   `ISP2D/ISP._merge_spectrum` merges the full physical spectrum into 3 contiguous super-bins
   (total fluence + fluence-weighted representative μ). Fewer spectral DOF (more identifiable)
   at the cost of a coarser forward model.

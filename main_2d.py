@@ -1,36 +1,16 @@
 """
-main_2d.py — primary 2-D results runner
-=======================================
-Runs the beam-hardening correction with the most faithful + robust configuration
-we have (closely matching the original authors' autodiffCT method, see README §8.8):
+main_2d.py -- primary 2-D results runner.
 
-  mu_eff_mode     = "lstsq"     least-squares effective attenuation — regress the
-                                polychromatic simulation onto the material path
-                                sinograms. No spectrum average, so it is immune to
-                                the soft-tail mu_eff inflation (README §8.5).
-  correction_mode = "residual" y_corrected = y_meas + (y_mono - y_poly): correct the
-                                *measured* sinogram by the modelled BH difference,
-                                preserving real measurement detail.
-  freeze_spectral = False       learn spectrum + attenuations + thresholds (honest —
-                                no ground-truth spectrum is assumed; lstsq does not
-                                rely on the learned spectrum being exact).
-  dk = 2, add_gaussian_noise = 0.
+Most robust config (matches the original autodiffCT method, README Sec 8.8):
+mu_eff_mode="lstsq" (immune to soft-tail inflation), correction_mode="residual"
+(corrects the measured sinogram, keeps real detail), freeze_spectral=False
+(learns the spectrum), dk=2. Result: PMMA cupping ~25% -> ~3%.
 
-Local result (this config): PMMA cupping 25.3% -> ~3%, PMMA CoV 0.16 -> 0.07.
+Outputs comparison_2d.png, cupping_2d.png, optimization_history_2d.png + a report.
+Plotting runs in a SUBPROCESS (plot_clean_results.py) because matplotlib crashes
+alongside torch+astra+MKL in this conda env.
 
-Produces (the canonical result figures, overwritten on each run):
-  comparison_2d.png            phantom | original | corrected | centre-line profiles
-  cupping_2d.png               PMMA radial profile + per-material mean/std
-  optimization_history_2d.png  loss curve
-and prints a quantitative report.
-
-Plotting runs in a SUBPROCESS (plot_clean_results.py) because matplotlib's native
-rendering crashes alongside torch + astra + MKL in this conda env (README §8.5). If
-that subprocess fails, re-plot the saved arrays with another interpreter.
-
-Run
----
-    python main_2d.py            # requires ASTRA + CUDA (FP/FBP)
+Run: python main_2d.py   (requires ASTRA + CUDA)
 """
 
 import os
@@ -52,7 +32,7 @@ from workflows.beam_hardening_correction_2d.barba_2d_phantom import render_phant
 
 def _print_report(metrics, header):
     print("\n" + "=" * 70)
-    print(" 2-D BEAM-HARDENING CORRECTION — RESULTS  |  " + header)
+    print(" 2-D BEAM-HARDENING CORRECTION -- RESULTS  |  " + header)
     print("=" * 70)
     print(f"{'Material':<8} {'Recon':<10} {'mean':>13} {'std':>13} {'CoV':>9}")
     print("-" * 70)
@@ -72,20 +52,22 @@ if __name__ == "__main__":
     workflow = BeamHardeningCorrectionWorkflow2D(
         optim_steps=500,
         lr=0.001,
-        dk=2.0,                      # strong, unambiguous beam hardening
-        add_gaussian_noise=0.0,      # clean demonstration (set >0 for noisy data)
+        dk=2.0,                      # strong, unambiguous beam hardening, try 10 and 50 to see diff - bin count higher for big dk
+        add_gaussian_noise=0.01,      # clean demonstration (set >0 for noisy data)
         mu_eff_mode="lstsq",         # least-squares effective attenuation (autodiffCT)
         correction_mode="residual",  # correct the measured sinogram (autodiffCT)
-        freeze_spectral=False,       # learn the spectrum — honest, not ground-truth-pinned
+        freeze_spectral=False,       # learn the spectrum -- honest, not ground-truth-pinned
+        spectral_perturb=0.8,        # perturb init spectrum by +/-30% (makes recovery non-trivial
+        smooth_sigma=1.0,            # denoise recon before segmentation (stabilises masks under noise)
     )
 
     original, final, history = workflow.run()
     phantom = render_phantom_2d(show=False)
 
     metrics = compute_validation_metrics(original, final, phantom)
-    _print_report(metrics, "mu_eff=lstsq correction=residual freeze=False dk=2 noise=0 outer=1")
+    _print_report(metrics, "mu_eff=lstsq correction=residual freeze=False dk=2 noise=0.01 perturb=3.8 smooth=1.0")
 
-    # ── Render figures in a separate (torch/astra-free) process ───────────────
+    # -- Render figures in a separate (torch/astra-free) process ---------------
     arrays_dir = os.path.join(_HERE, "_arrays_main")
     os.makedirs(arrays_dir, exist_ok=True)
     np.save(os.path.join(arrays_dir, "original.npy"), original)
