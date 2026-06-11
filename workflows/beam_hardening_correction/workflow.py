@@ -30,7 +30,7 @@ class BeamHardeningCorrectionWorkflow(Workflow):
         ):
         super().__init__()
         # dk sets the spectral resolution. dk=50 -> ~3 bins -> ~0% hardening (nothing to
-        # correct, original==final). dk=5 -> ~35 bins -> real hardening (see README Sec 8.9).
+        # correct, original==final). dk=5 -> ~35 bins -> real hardening.
         self.add_block(ProjectionData(dk=dk, add_gaussian_noise=add_gaussian_noise, noise_seed=noise_seed))
         # Execute the ProjectionData block to get the measured sinogram; it also writes
         # energy_bins.npy / fluence.npy / mu_values.npy used to seed the ISP block.

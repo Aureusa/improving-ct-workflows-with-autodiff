@@ -19,7 +19,7 @@ class ISP(torch.nn.Module):
         self.energy_bins = energy_bins
         self.energy_chunk_size = energy_chunk_size
         self.voxel_size = voxel_size
-        self.mu_eff_mode = mu_eff_mode  # 'fluence' (original) | 'transmission'
+        self.mu_eff_mode = mu_eff_mode  # 'fluence' | 'transmission' | 'lstsq'
         self.smooth_sigma = smooth_sigma  # Gaussian sigma [vox] to denoise recon before segmentation (0 = off)
         self._device = device
 
@@ -124,9 +124,9 @@ class ISP(torch.nn.Module):
             mu_eff -- monochromatic-equivalent attenuation per material (_effective_mu)
             y_mono = sum_m mu_eff[m]*As_n[m]   (linear in path length -> no cupping)
 
-        correction_mode='replace'  -> return y_mono (synthetic mono sinogram, original).
+        correction_mode='replace'  -> return y_mono (synthetic mono sinogram).
         correction_mode='residual' -> return y_meas + (y_mono - y_poly): correct the
-            measured sinogram by the modelled BH difference (original autodiffCT approach).
+            measured sinogram by the modelled BH difference.
         """
         with torch.no_grad():
             reconstruction = reconstruction.to(self._device)
@@ -153,11 +153,11 @@ class ISP(torch.nn.Module):
         Monochromatic-equivalent linear attenuation per material, mu_eff (M,).
         See the 2-D ISP2D._effective_mu for the full rationale.
 
-        'fluence' (original): mu_eff[m] = sum_e I_e*mu(e,m) / sum_e I_e -- dominated by
+        'fluence': mu_eff[m] = sum_e I_e*mu(e,m) / sum_e I_e -- dominated by
             the absorbed soft spectral tail, so it can be wildly inflated.
         'transmission': weight by detected photons through a representative object
             path, w_e = I_e*exp(-sum_m mu(e,m)*L_rep[m]) -> physical mu_eff w/o filtration.
-        'lstsq' (original autodiffCT): least-squares regression of y_poly onto the
+        'lstsq': least-squares regression of y_poly onto the
             material path sinograms (mu_eff = pinv(B)*V). Measurement-weighted, uses
             no spectrum average -> immune to the soft-tail inflation.
         Dimension-agnostic: As_n is (M, *rays).

@@ -1,7 +1,7 @@
 """
 main_2d.py -- primary 2-D results runner.
 
-Most robust config (matches the original autodiffCT method, README Sec 8.8):
+Most robust config:
 mu_eff_mode="lstsq" (immune to soft-tail inflation), correction_mode="residual"
 (corrects the measured sinogram, keeps real detail), freeze_spectral=False
 (learns the spectrum), dk=2. Result: PMMA cupping ~25% -> ~3%.
@@ -54,8 +54,8 @@ if __name__ == "__main__":
         lr=0.001,
         dk=2.0,                      # strong, unambiguous beam hardening, try 10 and 50 to see diff - bin count higher for big dk
         add_gaussian_noise=0.01,      # clean demonstration (set >0 for noisy data)
-        mu_eff_mode="lstsq",         # least-squares effective attenuation (autodiffCT)
-        correction_mode="residual",  # correct the measured sinogram (autodiffCT)
+        mu_eff_mode="lstsq",         # least-squares effective attenuation
+        correction_mode="residual",  # correct the measured sinogram
         freeze_spectral=False,       # learn the spectrum -- honest, not ground-truth-pinned
         spectral_perturb=0.8,        # perturb init spectrum by +/-30% (makes recovery non-trivial
         smooth_sigma=1.0,            # denoise recon before segmentation (stabilises masks under noise)

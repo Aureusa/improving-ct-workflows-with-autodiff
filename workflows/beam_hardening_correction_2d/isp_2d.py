@@ -52,7 +52,7 @@ class ISP2D(torch.nn.Module):
         self.energy_bins       = energy_bins
         self.energy_chunk_size = energy_chunk_size
         self.voxel_size        = voxel_size
-        self.mu_eff_mode       = mu_eff_mode   # 'fluence' (original) | 'transmission'
+        self.mu_eff_mode       = mu_eff_mode   # 'fluence' | 'transmission' | 'lstsq'
         self.smooth_sigma      = smooth_sigma  # Gaussian sigma [px] to denoise recon before segmentation (0 = off)
         self._device           = device
         self._t_initialized    = False
@@ -84,7 +84,7 @@ class ISP2D(torch.nn.Module):
         # multiplicative +/-spectral_perturb). ISP2D otherwise loads I/mu from the
         # exact spectrum that generated the data, so with freeze_spectral=False the
         # optimisation would still *start* at truth -- "loss goes down" then proves
-        # nothing (README Sec 6). A nonzero perturb makes recovery an honest test.
+        # nothing. A nonzero perturb makes recovery an honest test.
         if spectral_perturb > 0:
             g = torch.Generator().manual_seed(spectral_perturb_seed)
             I_fac  = 1.0 + spectral_perturb * (2.0 * torch.rand(self._I.shape,  generator=g) - 1.0)
@@ -180,7 +180,7 @@ class ISP2D(torch.nn.Module):
 
         'replace'  -> y_mono (fully synthetic mono sinogram).
         'residual' -> y_meas + (y_mono - y_poly): correct the measured sinogram by the
-                      modelled BH difference, preserving real detail (autodiffCT).
+                      modelled BH difference, preserving real detail.
         Returns (n_angles, n_pixels).
         """
         with torch.no_grad():
@@ -210,13 +210,13 @@ class ISP2D(torch.nn.Module):
         """
         Monochromatic-equivalent attenuation per material, mu_eff (M,). As_n is (M, *rays).
 
-        'fluence' (original): sum_e I_e*mu / sum_e I_e -- the thin-object slope. Dominated
+        'fluence': sum_e I_e*mu / sum_e I_e -- the thin-object slope. Dominated
             by the absorbed soft tail (huge mu), so it inflates (Al -> 53 cm^-1) and the
             correction explodes.
         'transmission': weight by photons that survive a representative path,
             w_e = I_e*exp(-sum_m mu(e,m)*L_rep[m]) with L_rep = mean per-material path over
             object rays, so absorbed soft photons get ~zero weight. Restores Al ~= 1.5 cm^-1.
-        'lstsq' (autodiffCT): least-squares regress y_poly onto As_n -- no spectrum
+        'lstsq': least-squares regress y_poly onto As_n -- no spectrum
             average, so immune to the soft-tail inflation.
         """
         mode = getattr(self, "mu_eff_mode", "fluence")
@@ -244,7 +244,7 @@ class ISP2D(torch.nn.Module):
             w = I * torch.exp(-attn)                               # (E,) detected-photon weight
             return (mu * w.unsqueeze(0)).sum(dim=1) / w.sum().clamp_min(1e-8)
 
-        # default: fluence-weighted (original)
+        # default: fluence-weighted
         return (mu * I.unsqueeze(0)).sum(dim=1) / I.sum().clamp_min(1e-8)
 
     def _gaussian_blur(self, x: torch.Tensor, sigma: float) -> torch.Tensor:

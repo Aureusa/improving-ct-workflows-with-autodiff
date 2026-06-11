@@ -2,7 +2,7 @@
 main.py -- 3-D entry point
 =========================
 Runs the 3-D beam-hardening correction (least-squares mu_eff + residual correction,
-normalized soft-segmentation + per-parameter LR -- see README Sec 8.8/Sec 8.9) and builds an
+normalized soft-segmentation + per-parameter LR) and builds an
 INTERACTIVE plotly viewer you open in a browser:
 
     reconstruction_3d.html
