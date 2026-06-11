@@ -56,7 +56,7 @@ def _droop(kvp, dk, mat="C5H8O2", L_cm=5.0):
 # --------------------------------- deterministic ------------------------------
 def deterministic():
     out = {"dk_droop": {}, "perturb": []}
-    for kvp in (120, 180):
+    for kvp in [120]:
         out["dk_droop"][kvp] = [dict(dk=dk, **dict(zip(("bins", "droop_pct"), _droop(kvp, dk))))
                                 for dk in (2, 5, 10, 20, 50)]
     import torch
@@ -148,7 +148,7 @@ def _run3d(dk, noise=0.0, seed=0, smooth=0.0, steps=200, html_path=None):
 def sweep_3d():
     out = {"dk": [], "noise": []}
     for dk in (5, 20):                       # high hardening vs low hardening (no noise)
-        r = dict(dk=dk, droop_pct=_droop(180, dk)[1], **_run3d(dk))
+        r = dict(dk=dk, droop_pct=_droop(120, dk)[1], **_run3d(dk))
         out["dk"].append(r); _save("3d", out)
         print(f"DONE 3d-dk | dk={dk:<3} droop {r['droop_pct']:5.1f}% | cup {r['cup_orig']:6.2f} -> {r['cup_corr']:7.2f}")
     for noise, smooth in [(0.02, 0.0), (0.05, 0.0), (0.05, 1.0)]:   # noise effect at dk=5

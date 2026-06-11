@@ -26,7 +26,7 @@ class ProjectionData(Block):
     # dk=50 yields only ~3 energy bins -> an effectively monochromatic beam with ~0%
     # beam hardening (original/final reconstructions come out identical). dk=5 -> ~35
     # bins -> ~47% hardening at this object size, so there is a real artefact to correct.
-    def __init__(self, kvp=180, th=12, dk=5, physics="spekcalc", add_gaussian_noise=0.0, noise_seed=0):
+    def __init__(self, kvp=120, th=12, dk=5, physics="spekcalc", add_gaussian_noise=0.0, noise_seed=0):
         super().__init__()
         self.kvp = kvp
         self.th = th
@@ -37,7 +37,7 @@ class ProjectionData(Block):
 
     def execute(self):
         # Work around SpekPy v2 + NumPy 2.x incompatibility in default physics path.
-        r = sp.Spek(kvp=self.kvp, th=self.th, dk=self.dk, physics=self.physics)  # Generate a spectrum (180 kV, 12 degree tube angle)
+        r = sp.Spek(kvp=self.kvp, th=self.th, dk=self.dk, physics=self.physics)  # Generate a spectrum (120 kV, 12 degree tube angle)
 
         pmma_mu = generate_linear_attenuation_params(r, ("C5H8O2"))  # Get attenuation coefficients for PMMA
         al_mu = generate_linear_attenuation_params(r, "Al")  # Get attenuation coefficients for Aluminum
