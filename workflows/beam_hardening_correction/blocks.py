@@ -23,9 +23,9 @@ _DATA_DIR = os.path.dirname(os.path.abspath(__file__))
 #               Input blocks                  #
 ##############################################
 class ProjectionData(Block):
-    # dk=50 yields only ~3 energy bins -> an effectively monochromatic beam with ~0%
-    # beam hardening (original/final reconstructions come out identical). dk=5 -> ~35
-    # bins -> ~47% hardening at this object size, so there is a real artefact to correct.
+    # dk=50 yields only ~2 energy bins -> an effectively monochromatic beam with ~0%
+    # beam hardening (original/final reconstructions come out identical). dk=5 -> ~24
+    # bins (at 120 kVp) -> strong hardening, so there is a real artefact to correct.
     def __init__(self, kvp=120, th=12, dk=5, physics="spekcalc", add_gaussian_noise=0.0, noise_seed=0):
         super().__init__()
         self.kvp = kvp

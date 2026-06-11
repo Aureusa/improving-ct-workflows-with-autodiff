@@ -64,10 +64,10 @@
     },
     {
       "noise": 0.05,
-      "smooth": 1.5,
-      "cup_corr_mean": 10.696566953761348,
-      "cup_corr_std": 2.8210363817659667,
-      "pmma_cov_corr_mean": 1.6127699482921434,
+      "smooth": 1.0,
+      "cup_corr_mean": 14.6760264512887,
+      "cup_corr_std": 1.8537644037971057,
+      "pmma_cov_corr_mean": 1.6335249940649943,
       "cup_orig_mean": 22.52685060084126
     }
   ]

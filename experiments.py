@@ -53,30 +53,6 @@ def _droop(kvp, dk, mat="C5H8O2", L_cm=5.0):
     return int(len(f)), float((slope0 * L[-1] - A[-1]) / (slope0 * L[-1]) * 100)
 
 
-# --------------------------------- deterministic ------------------------------
-def deterministic():
-    out = {"dk_droop": {}, "perturb": []}
-    for kvp in [120]:
-        out["dk_droop"][kvp] = [dict(dk=dk, **dict(zip(("bins", "droop_pct"), _droop(kvp, dk))))
-                                for dk in (2, 5, 10, 20, 50)]
-    import torch
-    r = sp.Spek(kvp=120, th=12, dk=2, physics="spekcalc")
-    I0 = torch.tensor(np.array(r.get_spk(), dtype=np.float64))
-    corr = lambda a, b: float(((a-a.mean())*(b-b.mean())).sum()/((a-a.mean()).norm()*(b-b.mean()).norm()+1e-12))
-    for p in (0.1, 0.3, 1.0, 3.0, 10.0):
-        g = torch.Generator().manual_seed(0)
-        fac = 1 + p*(2*torch.rand(I0.shape, generator=g) - 1)
-        Ip = (I0*fac).clamp_min(0.0)
-        out["perturb"].append(dict(perturb=p, pct_bins_zeroed=float((Ip == 0).float().mean()*100),
-                                   corr_with_truth=corr(I0, Ip)))
-    g = torch.Generator().manual_seed(0)
-    out["perturb"].append(dict(perturb="random", pct_bins_zeroed=0.0,
-                               corr_with_truth=corr(I0, torch.rand(I0.shape, generator=g))))
-    _save("det", out)
-    print(json.dumps(out, indent=2))
-    return out
-
-
 # ----------------------------------- 2-D --------------------------------------
 def _metrics2d(orig, final, phantom):
     from workflows.beam_hardening_correction_2d.plotting import compute_validation_metrics
@@ -162,7 +138,7 @@ def sweep_3d():
 # One representative figure per config (seed 0). 2-D -> PNG, 3-D -> interactive HTML.
 _FIG_2D = [("dk2", dict(dk=2)), ("dk5", dict(dk=5)), ("dk10", dict(dk=10)), ("dk20", dict(dk=20)),
            ("dk5_noise0.02", dict(dk=5, noise=0.02)), ("dk5_noise0.05", dict(dk=5, noise=0.05)),
-           ("dk5_noise0.05_smooth1.5", dict(dk=5, noise=0.05, smooth=1.5))]
+           ("dk5_noise0.05_smooth1.0", dict(dk=5, noise=0.05, smooth=1.0))]
 _FIG_3D = [("dk5", dict(dk=5)), ("dk20", dict(dk=20)),
            ("dk5_noise0.02", dict(dk=5, noise=0.02)), ("dk5_noise0.05", dict(dk=5, noise=0.05)),
            ("dk5_noise0.05_smooth1.0", dict(dk=5, noise=0.05, smooth=1.0))]
@@ -181,7 +157,7 @@ def figures_3d():
 
 
 if __name__ == "__main__":
-    mode = sys.argv[1] if len(sys.argv) > 1 else "det"
-    {"det": deterministic, "2d": sweep_2d, "3d": sweep_3d,
+    mode = sys.argv[1] if len(sys.argv) > 1 else "2d"
+    {"2d": sweep_2d, "3d": sweep_3d,
      "fig2d": figures_2d, "fig3d": figures_3d}[mode]()
     print(f"\nDone: {mode} -> results/")

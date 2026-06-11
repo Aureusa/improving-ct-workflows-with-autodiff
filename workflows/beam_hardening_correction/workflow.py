@@ -29,8 +29,8 @@ class BeamHardeningCorrectionWorkflow(Workflow):
             device: str = "cuda" if torch.cuda.is_available() else "cpu"
         ):
         super().__init__()
-        # dk sets the spectral resolution. dk=50 -> ~3 bins -> ~0% hardening (nothing to
-        # correct, original==final). dk=5 -> ~35 bins -> real hardening.
+        # dk sets the spectral resolution. dk=50 -> ~2 bins -> ~0% hardening (nothing to
+        # correct, original==final). dk=5 -> ~24 bins (at 120 kVp) -> real hardening.
         self.add_block(ProjectionData(dk=dk, add_gaussian_noise=add_gaussian_noise, noise_seed=noise_seed))
         # Execute the ProjectionData block to get the measured sinogram; it also writes
         # energy_bins.npy / fluence.npy / mu_values.npy used to seed the ISP block.
