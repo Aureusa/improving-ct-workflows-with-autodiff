@@ -1,20 +1,3 @@
-"""
-plot_clean_results.py
----------------------
-Render the clean-validation figures from saved arrays, in a process that imports
-ONLY numpy + matplotlib (NO torch / astra).
-
-main_2d.py runs this as a subprocess because matplotlib hard-crashes (silent, no
-traceback) when torch + astra + MKL OpenMP are loaded in one process on this
-conda/Windows box (KMP_DUPLICATE_LIB_OK does not help). A fresh torch/astra-free
-process side-steps it. Standalone re-plot:
-
-    python plot_clean_results.py --arrays _arrays_main --out .
-
-Reads : <arrays>/{original,corrected,phantom,history}.npy
-Writes: <out>/{optimization_history_2d_clean,comparison_2d_clean,cupping_validation_2d_clean}.png
-"""
-
 import argparse
 import os
 import sys
