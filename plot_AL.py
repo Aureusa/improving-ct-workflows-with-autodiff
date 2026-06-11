@@ -27,7 +27,7 @@ def compute():
         mu = np.array(generate_linear_attenuation_params(r, compound), dtype=np.float64)
         L = np.linspace(0, Lmax, 300)
         A_poly = -np.log((I[:, None] * np.exp(-mu[:, None] * L[None, :])).sum(0) / I.sum())
-        mu_bar = (I * mu).sum() / I.sum()          # initial slope (eq. 4)
+        mu_bar = (I * mu).sum() / I.sum()          
         data[f"{tag}_L"] = L
         data[f"{tag}_poly"] = A_poly
         data[f"{tag}_mono"] = mu_bar * L
@@ -73,6 +73,6 @@ if __name__ == "__main__":
     if mode == "render":
         render()
     if mode == "all":
-        # auto-render with the base python (working matplotlib)
+        # auto-render with the base python 
         py = _BASE_PY if os.path.exists(_BASE_PY) else sys.executable
         subprocess.run([py, os.path.join(_HERE, "plot_AL.py"), "render"])

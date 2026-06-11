@@ -109,7 +109,7 @@ def sweep_2d():
         out["dk"].append(r); _save("2d", out)
         print(f"DONE 2d-dk | dk={dk:<3} droop {r['droop_pct']:5.1f}% | cup {r['cup_orig']:6.2f} -> {r['cup_corr']:7.2f}")
     # Exp B: noise effect at dk=5 (seed-averaged); smooth=0, plus smooth=1.5 at the top level
-    for noise, smooth in [(0.0, 0.0), (0.02, 0.0), (0.05, 0.0), (0.05, 1.5)]:
+    for noise, smooth in [(0.0, 0.0), (0.02, 0.0), (0.05, 0.0), (0.05, 1.0)]:
         rows = []
         for seed in (0, 1, 2):
             try:
