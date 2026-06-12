@@ -12,7 +12,6 @@ import matplotlib.pyplot as plt
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
 
-# plotting.py imports only matplotlib + numpy, so this does NOT pull in torch/astra
 from workflows.beam_hardening_correction_2d.plotting import (
     plot_comparison_2d,
     plot_cupping_validation_2d,
@@ -55,7 +54,7 @@ def main():
     plt.close()
 
     # Side-by-side comparison
-    base_title = f"Beam-Hardening Correction -- 2-D Barba Phantom{(' ' + sfx) if sfx else ''}"
+    base_title = f"Beam-Hardening Correction - 2-D Barba Phantom{(' ' + sfx) if sfx else ''}"
     full_title = f"{args.title}\n{base_title}" if args.title else base_title
     plot_comparison_2d(
         original, corrected, phantom=phantom,
@@ -66,7 +65,7 @@ def main():
     # Cupping diagnostics (PMMA radial profile + per-material uniformity)
     plot_cupping_validation_2d(
         original, corrected, phantom=phantom,
-        title="Cupping Validation -- PMMA radial profile + material uniformity",
+        title="Cupping Validation - PMMA radial profile",
         save_path=cupp_path,
     )
 
