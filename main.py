@@ -40,7 +40,7 @@ if __name__ == "__main__":
     ap.add_argument("--correction-mode", choices=["replace", "residual"], default="residual",
                     help="'residual' (default) = y_meas + (y_mono - y_poly); "
                          "'replace' = synthetic mono sinogram.")
-    ap.add_argument("--mu-eff-mode", choices=["fluence", "transmission", "lstsq"], default="lstsq")
+    ap.add_argument("--mu-eff-mode", choices=["fluence", "lstsq"], default="lstsq")
     ap.add_argument("--steps", type=int, default=300, help="3-D is heavy (128^3 x ~35 bins)")
     ap.add_argument("--dk", type=float, default=5.0)
     ap.add_argument("--perturb", type=float, default=0.2,

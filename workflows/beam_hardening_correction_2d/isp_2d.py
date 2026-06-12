@@ -52,7 +52,7 @@ class ISP2D(torch.nn.Module):
         self.energy_bins       = energy_bins
         self.energy_chunk_size = energy_chunk_size
         self.voxel_size        = voxel_size
-        self.mu_eff_mode       = mu_eff_mode   # 'fluence' | 'transmission' | 'lstsq'
+        self.mu_eff_mode       = mu_eff_mode   # 'fluence' | 'lstsq'
         self.smooth_sigma      = smooth_sigma  # Gaussian sigma [px] to denoise recon before segmentation (0 = off)
         self._device           = device
         self._t_initialized    = False
@@ -213,9 +213,6 @@ class ISP2D(torch.nn.Module):
         'fluence': sum_e I_e*mu / sum_e I_e -- the thin-object slope. Dominated
             by the absorbed soft tail (huge mu), so it inflates (Al -> 53 cm^-1) and the
             correction explodes.
-        'transmission': weight by photons that survive a representative path,
-            w_e = I_e*exp(-sum_m mu(e,m)*L_rep[m]) with L_rep = mean per-material path over
-            object rays, so absorbed soft photons get ~zero weight. Restores Al ~= 1.5 cm^-1.
         'lstsq': least-squares regress y_poly onto As_n -- no spectrum
             average, so immune to the soft-tail inflation.
         """
@@ -232,17 +229,6 @@ class ISP2D(torch.nn.Module):
             B = A_flat @ A_flat.t()                          # (M, M)
             V = A_flat @ y_flat                              # (M,)
             return torch.linalg.pinv(B) @ V                  # (M,)
-
-        if mode == "transmission":
-            total_path = As_n.sum(dim=0)                          # (*rays)
-            object_rays = total_path > 1e-6                        # rays through the object
-            if bool(object_rays.any()):
-                L_rep = As_n[:, object_rays].mean(dim=1)          # (M,)
-            else:
-                L_rep = As_n.reshape(As_n.shape[0], -1).mean(dim=1)
-            attn = torch.einsum("me,m->e", mu, L_rep)             # (E,) sum_m mu(e,m)*L_rep[m]
-            w = I * torch.exp(-attn)                               # (E,) detected-photon weight
-            return (mu * w.unsqueeze(0)).sum(dim=1) / w.sum().clamp_min(1e-8)
 
         # default: fluence-weighted
         return (mu * I.unsqueeze(0)).sum(dim=1) / I.sum().clamp_min(1e-8)

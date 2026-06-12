@@ -27,7 +27,7 @@ class BeamHardeningCorrectionWorkflow2D(Workflow):
       add_gaussian_noise : fractional Gaussian noise on the sinogram (0 = clean); noise_seed for repro
       freeze_spectral    : hold I/mu at ground truth, learn only t (honest test)
       al_filter_mm       : added Al filtration [mm]; removes the soft tail that inflates mu_eff
-      mu_eff_mode        : 'fluence' | 'transmission' | 'lstsq'  (see ISP2D._effective_mu)
+      mu_eff_mode        : 'fluence' | 'lstsq'  (see ISP2D._effective_mu)
       correction_mode    : 'replace' (synthetic mono sinogram) | 'residual' (keeps real detail)
       spectral_perturb   : perturb I/mu init off ground truth (per-bin +/-); honest recovery test
       smooth_sigma       : Gaussian sigma [px] to denoise recon before segmentation (0 = off)

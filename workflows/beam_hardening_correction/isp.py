@@ -19,7 +19,7 @@ class ISP(torch.nn.Module):
         self.energy_bins = energy_bins
         self.energy_chunk_size = energy_chunk_size
         self.voxel_size = voxel_size
-        self.mu_eff_mode = mu_eff_mode  # 'fluence' | 'transmission' | 'lstsq'
+        self.mu_eff_mode = mu_eff_mode  # 'fluence' | 'lstsq'
         self.smooth_sigma = smooth_sigma  # Gaussian sigma [vox] to denoise recon before segmentation (0 = off)
         self._device = device
 
@@ -155,8 +155,6 @@ class ISP(torch.nn.Module):
 
         'fluence': mu_eff[m] = sum_e I_e*mu(e,m) / sum_e I_e -- dominated by
             the absorbed soft spectral tail, so it can be wildly inflated.
-        'transmission': weight by detected photons through a representative object
-            path, w_e = I_e*exp(-sum_m mu(e,m)*L_rep[m]) -> physical mu_eff w/o filtration.
         'lstsq': least-squares regression of y_poly onto the
             material path sinograms (mu_eff = pinv(B)*V). Measurement-weighted, uses
             no spectrum average -> immune to the soft-tail inflation.
@@ -175,16 +173,6 @@ class ISP(torch.nn.Module):
             V = A_flat @ y_flat                         # (M,)
             return torch.linalg.pinv(B) @ V             # (M,)
 
-        if mode == "transmission":
-            total_path = As_n.sum(dim=0)
-            object_rays = total_path > 1e-6
-            if bool(object_rays.any()):
-                L_rep = As_n[:, object_rays].mean(dim=1)
-            else:
-                L_rep = As_n.reshape(As_n.shape[0], -1).mean(dim=1)
-            attn = torch.einsum("me,m->e", mu, L_rep)
-            w = I * torch.exp(-attn)
-            return (mu * w.unsqueeze(0)).sum(dim=1) / w.sum().clamp_min(1e-8)
         return (mu * I.unsqueeze(0)).sum(dim=1) / I.sum().clamp_min(1e-8)
 
     def _gaussian_blur3d(self, x, sigma):
