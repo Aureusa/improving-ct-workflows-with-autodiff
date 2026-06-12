@@ -87,7 +87,7 @@ def _square_axes(fig, n_panels):
         fig.update_layout(**{f"xaxis{sfx}": dict(constrain="domain")})
 
 
-def build_html(original, corrected, phantom, history, out_path, vol_stride=2, n_slices=20):
+def build_html(original, corrected, phantom, history, out_path, vol_stride=2, n_slices=20, title=""):
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
 
@@ -216,7 +216,8 @@ def build_html(original, corrected, phantom, history, out_path, vol_stride=2, n_
         "<title>3-D Beam-Hardening Correction -- interactive</title></head>"
         "<body style='font-family:sans-serif;max-width:1300px;margin:24px auto;padding:0 12px'>"
         "<h1>3-D Beam-Hardening Correction -- interactive results</h1>"
-        "<p>lstsq &mu;<sub>eff</sub> + residual correction. Drag the 3-D views to rotate; "
+        + (f"<h2 style='color:#555;margin-top:0'>{title}</h2>" if title else "")
+        + "<p>lstsq &mu;<sub>eff</sub> + residual correction. Drag the 3-D views to rotate; "
         "use the slider to scrub slices.</p>"
         + table + "".join(parts) + "</body></html>"
     )

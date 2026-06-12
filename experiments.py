@@ -22,7 +22,7 @@ def _save(mode, data):
         json.dump(data, f, indent=2)
 
 
-def _render2d(orig, final, phantom, hist, png_path):
+def _render2d(orig, final, phantom, hist, png_path, title=""):
     """Render comparison + cupping PNGs in a torch/astra-free subprocess (matplotlib
     crashes in-process alongside torch+astra). png_path = the comparison figure path."""
     import tempfile, subprocess, shutil
@@ -32,11 +32,14 @@ def _render2d(orig, final, phantom, hist, png_path):
     np.save(os.path.join(d, "phantom.npy"), phantom)
     np.save(os.path.join(d, "history.npy"), np.asarray(hist, dtype=np.float32))
     base = png_path[:-4] if png_path.endswith(".png") else png_path
-    rc = subprocess.run([_PLOT_PY, os.path.join(_HERE, "plot_clean_results.py"),
-                         "--arrays", d, "--out", os.path.dirname(png_path) or ".",
-                         "--comparison", png_path,
-                         "--cupping", base + "_cupping.png",
-                         "--history", base + "_loss.png"]).returncode
+    cmd = [_PLOT_PY, os.path.join(_HERE, "plot_clean_results.py"),
+           "--arrays", d, "--out", os.path.dirname(png_path) or ".",
+           "--comparison", png_path,
+           "--cupping", base + "_cupping.png",
+           "--history", base + "_loss.png"]
+    if title:
+        cmd += ["--title", title]
+    rc = subprocess.run(cmd).returncode
     shutil.rmtree(d, ignore_errors=True)
     if rc != 0:
         print(f"  [warn] plot subprocess exited {rc} for {png_path}")
@@ -73,7 +76,8 @@ def _run2d(dk, noise=0.0, seed=0, smooth=0.0, fig_path=None):
     orig, final, hist = wf.run()
     phantom = render_phantom_2d(show=False)
     if fig_path:
-        _render2d(orig, final, phantom, hist, fig_path)
+        title = f"dk={dk}  noise={noise:.0%}  smooth={smooth}"
+        _render2d(orig, final, phantom, hist, fig_path, title=title)
     return _metrics2d(orig, final, phantom)
 
 
@@ -114,7 +118,8 @@ def _run3d(dk, noise=0.0, seed=0, smooth=0.0, steps=200, html_path=None):
     orig, final, hist = wf.run()
     phantom = render_phantom(show_3d=False, show_projection=False)
     if html_path:
-        build_html(orig, final, phantom, np.asarray(hist), html_path)
+        title = f"dk={dk}  noise={noise:.0%}  smooth={smooth}"
+        build_html(orig, final, phantom, np.asarray(hist), html_path, title=title)
     rows, cup = _metrics(orig, final, phantom)
     return dict(cup_orig=cup["original"], cup_corr=cup["corrected"],
                 pmma_cov_orig=rows["PMMA"]["original"]["cov"], pmma_cov_corr=rows["PMMA"]["corrected"]["cov"],

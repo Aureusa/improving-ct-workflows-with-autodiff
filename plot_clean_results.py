@@ -28,6 +28,7 @@ def main():
     ap.add_argument("--comparison", default=None, help="explicit output path for the comparison figure")
     ap.add_argument("--cupping", default=None, help="explicit output path for the cupping figure")
     ap.add_argument("--history", default=None, help="explicit output path for the loss-history figure")
+    ap.add_argument("--title", default="", help="settings header shown at the top of the comparison figure")
     args = ap.parse_args()
     sfx = args.suffix
     comp_path = args.comparison or os.path.join(args.out, f"comparison_2d_clean{sfx}.png")
@@ -44,16 +45,21 @@ def main():
     plt.plot(history)
     plt.xlabel("Optimisation step")
     plt.ylabel("Loss")
-    plt.title("Optimisation Loss History (2-D clean validation)")
+    loss_title = "Optimisation Loss History (2-D clean validation)"
+    if args.title:
+        loss_title = args.title + "\n" + loss_title
+    plt.title(loss_title)
     plt.yscale("log")
     plt.tight_layout()
     plt.savefig(hist_path)
     plt.close()
 
     # Side-by-side comparison
+    base_title = f"Beam-Hardening Correction -- 2-D Barba Phantom{(' ' + sfx) if sfx else ''}"
+    full_title = f"{args.title}\n{base_title}" if args.title else base_title
     plot_comparison_2d(
         original, corrected, phantom=phantom,
-        title=f"Beam-Hardening Correction -- 2-D Barba Phantom{(' ' + sfx) if sfx else ''}",
+        title=full_title,
         save_path=comp_path,
     )
 
