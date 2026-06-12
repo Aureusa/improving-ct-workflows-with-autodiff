@@ -88,12 +88,12 @@ def sweep_2d():
         r = dict(dk=dk, droop_pct=_droop(120, dk)[1], **_run2d(dk))
         out["dk"].append(r); _save("2d", out)
         print(f"DONE 2d-dk | dk={dk:<3} droop {r['droop_pct']:5.1f}% | cup {r['cup_orig']:6.2f} -> {r['cup_corr']:7.2f}")
-    # Exp B: noise effect at dk=5 (seed-averaged); smooth=0, plus smooth=1.5 at the top level
+    # Exp B: noise effect at dk=2 (seed-averaged); smooth=0, plus smooth=1.0 at the top level
     for noise, smooth in [(0.0, 0.0), (0.02, 0.0), (0.05, 0.0), (0.05, 1.0)]:
         rows = []
         for seed in (0, 1, 2):
             try:
-                rows.append(_run2d(5, noise=noise, seed=seed, smooth=smooth))
+                rows.append(_run2d(2, noise=noise, seed=seed, smooth=smooth))
             except Exception as e:
                 rows.append(dict(error=repr(e)))
         ok = [r for r in rows if "error" not in r]
@@ -142,8 +142,8 @@ def sweep_3d():
 # ----------------------------- figure generation ------------------------------
 # One representative figure per config (seed 0). 2-D -> PNG, 3-D -> interactive HTML.
 _FIG_2D = [("dk2", dict(dk=2)), ("dk5", dict(dk=5)), ("dk10", dict(dk=10)), ("dk20", dict(dk=20)),
-           ("dk5_noise0.02", dict(dk=5, noise=0.02)), ("dk5_noise0.05", dict(dk=5, noise=0.05)),
-           ("dk5_noise0.05_smooth1.0", dict(dk=5, noise=0.05, smooth=1.0))]
+           ("dk2_noise0.02", dict(dk=2, noise=0.02)), ("dk2_noise0.05", dict(dk=2, noise=0.05)),
+           ("dk2_noise0.05_smooth1.0", dict(dk=2, noise=0.05, smooth=1.0))]
 _FIG_3D = [("dk5", dict(dk=5)), ("dk20", dict(dk=20)),
            ("dk5_noise0.02", dict(dk=5, noise=0.02)), ("dk5_noise0.05", dict(dk=5, noise=0.05)),
            ("dk5_noise0.05_smooth1.0", dict(dk=5, noise=0.05, smooth=1.0))]

@@ -2,36 +2,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-def plot_reconstruction_2d(
-    reconstruction: np.ndarray,
-    scatter_stride: int = 1,       # kept for API compatibility with 3-D version
-    marker_size: float = 1.5,
-    marker_opacity: float = 0.3,
-    title: str = "Reconstruction",
-    save_path: str = None,
-) -> None:
-    """Show a 2-D reconstruction: imshow + horizontal centre-line profile (reveals cupping)."""
-    mid = reconstruction.shape[0] // 2
-
-    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
-    fig.suptitle(title)
-
-    axes[0].imshow(reconstruction.T, origin="lower", cmap="gray")
-    axes[0].set_title("Reconstruction")
-    axes[0].axis("off")
-
-    axes[1].plot(reconstruction[mid], lw=1.2)
-    axes[1].set_title("Centre-line profile  (cupping check)")
-    axes[1].set_xlabel("Pixel")
-    axes[1].set_ylabel("Reconstructed attenuation")
-    axes[1].grid(True, alpha=0.3)
-
-    plt.tight_layout()
-    if save_path is not None:
-        plt.savefig(save_path, dpi=100)
-    plt.close()
-
-
 def plot_comparison_2d(
     original: np.ndarray,
     corrected: np.ndarray,
@@ -103,110 +73,6 @@ def plot_comparison_2d(
         ax_att.legend(lines_att + lines_mat, labels_att + labels_mat, fontsize=8)
     else:
         ax_att.legend()
-
-    plt.tight_layout()
-    if save_path is not None:
-        plt.savefig(save_path, dpi=100)
-    plt.close()
-
-
-def plot_segmentation_comparison_2d(
-    original: np.ndarray,
-    corrected: np.ndarray,
-    thresholds: np.ndarray,
-    phantom: np.ndarray = None,
-    title: str = "Segmentation Comparison",
-    save_path: str = None,
-) -> None:
-    """
-    Hard-segment the original (beam-hardened) and corrected reconstructions with the
-    learned ISP thresholds and plot them side-by-side so the BH effect is visible.
-    thresholds (M,) are sorted before use; phantom (optional) is the ground-truth labels.
-    """
-    from matplotlib.colors import ListedColormap, BoundaryNorm
-    from matplotlib.patches import Patch
-
-    thresholds = np.sort(thresholds)          # ensure ascending order
-    n_labels   = len(thresholds) + 1          # e.g. 3 for 2 thresholds
-    vmin, vmax = -0.5, n_labels - 0.5        # noqa: F841
-
-    # Hard segmentation via digitize: result is 0 ... n_labels-1
-    seg_orig = np.digitize(original,  thresholds).astype(int)
-    seg_corr = np.digitize(corrected, thresholds).astype(int)
-
-    # Shared colormap + legend
-    colors         = ["#1a1a2e", "#4e9af1", "#f4a261", "#6fcf97"][:n_labels]
-    mat_names      = ["Air", "PMMA", "Al", "Mat-3"][:n_labels]
-    cmap_seg       = ListedColormap(colors)
-    norm_seg       = BoundaryNorm(np.arange(-0.5, n_labels), ncolors=n_labels)
-    legend_patches = [Patch(facecolor=c, label=l) for c, l in zip(colors, mat_names)]
-
-    mid   = original.shape[0] // 2
-    ncols = 4 if phantom is not None else 3
-    fig, axes = plt.subplots(1, ncols, figsize=(5 * ncols, 4))
-    fig.suptitle(title)
-
-    col = 0
-
-    # -- Ground-truth phantom (optional) --------------------------------------
-    if phantom is not None:
-        axes[col].imshow(
-            phantom.T, origin="lower", cmap=cmap_seg, norm=norm_seg,
-            interpolation="nearest",
-        )
-        axes[col].set_title("Ground truth")
-        axes[col].legend(handles=legend_patches, loc="lower right", fontsize=7)
-        axes[col].axis("off")
-        col += 1
-
-    # -- Segmentation: original (beam-hardened) --------------------------------
-    axes[col].imshow(
-        seg_orig.T, origin="lower", cmap=cmap_seg, norm=norm_seg,
-        interpolation="nearest",
-    )
-    axes[col].set_title("Original segmentation\n(beam-hardened FBP)")
-    axes[col].legend(handles=legend_patches, loc="lower right", fontsize=7)
-    axes[col].axis("off")
-    col += 1
-
-    # -- Segmentation: corrected -----------------------------------------------
-    axes[col].imshow(
-        seg_corr.T, origin="lower", cmap=cmap_seg, norm=norm_seg,
-        interpolation="nearest",
-    )
-    axes[col].set_title("Corrected segmentation")
-    axes[col].legend(handles=legend_patches, loc="lower right", fontsize=7)
-    axes[col].axis("off")
-    col += 1
-
-    # -- Centre-line material-label profiles -----------------------------------
-    ax = axes[col]
-    if phantom is not None:
-        ax.step(
-            np.arange(phantom.shape[1]), phantom[mid],
-            where="mid", lw=1.2, color="tab:green",
-            linestyle=":", label="Ground truth",
-        )
-    ax.step(
-        np.arange(seg_orig.shape[1]), seg_orig[mid],
-        where="mid", lw=1.6, color="tab:blue", label="Original (BH)",
-    )
-    ax.step(
-        np.arange(seg_corr.shape[1]), seg_corr[mid],
-        where="mid", lw=1.6, color="tab:orange",
-        linestyle="--", label="Corrected",
-    )
-    # Horizontal lines marking the threshold boundaries
-    for i in range(n_labels - 1):
-        ax.axhline(i + 0.5, color="gray", lw=0.6, linestyle=":")
-    ax.set_yticks(list(range(n_labels)))
-    ax.set_yticklabels(mat_names[:n_labels])
-    ax.set_ylim(-0.5, n_labels - 0.3)
-    ax.set_title("Centre-line material labels")
-    ax.set_xlabel("Pixel")
-    ax.set_ylabel("Material")
-    ax.legend(fontsize=8)
-    ax.grid(True, alpha=0.3, axis="x")
 
     plt.tight_layout()
     if save_path is not None:
@@ -303,48 +169,22 @@ def plot_cupping_validation_2d(
     save_path: str = None,
 ) -> None:
     """
-    Two-panel cupping diagnostic:
-      1. PMMA-only radial attenuation profile (original vs corrected). Flat =
-         no cupping; a rise toward the rim = residual beam hardening.
-      2. Per-material mean +/- std bar chart (lower std = more uniform material).
+    PMMA-only radial attenuation profile (original vs corrected). Flat = no cupping;
+    a rise toward the rim = residual beam hardening.
     """
     pmma = phantom == 1.0
     r_o, p_o = _radial_profile_masked(original, pmma)
     r_c, p_c = _radial_profile_masked(corrected, pmma)
 
-    fig, axes = plt.subplots(1, 2, figsize=(13, 5))
+    fig, ax = plt.subplots(1, 1, figsize=(6.5, 5))
     fig.suptitle(title)
 
-    ax = axes[0]
     ax.plot(r_o, p_o, color="tab:blue", lw=1.6, label="Original (beam-hardened)")
     ax.plot(r_c, p_c, color="tab:orange", lw=1.6, linestyle="--", label="Corrected")
     ax.set_title("PMMA radial profile (cupping check)")
     ax.set_xlabel("Radius from centre [pixels]")
     ax.set_ylabel("Mean reconstructed attenuation")
     ax.grid(True, alpha=0.3)
-    ax.legend()
-
-    ax = axes[1]
-    names = ["Air", "PMMA", "Al"]
-    labels = [0.0, 1.0, 2.0]
-    o_means, o_stds, c_means, c_stds = [], [], [], []
-    for label in labels:
-        m = phantom == label
-        o_means.append(float(original[m].mean()) if m.any() else np.nan)
-        o_stds.append(float(original[m].std()) if m.any() else np.nan)
-        c_means.append(float(corrected[m].mean()) if m.any() else np.nan)
-        c_stds.append(float(corrected[m].std()) if m.any() else np.nan)
-    x = np.arange(len(names))
-    w = 0.35
-    ax.bar(x - w / 2, o_means, w, yerr=o_stds, capsize=4,
-           color="tab:blue", alpha=0.8, label="Original")
-    ax.bar(x + w / 2, c_means, w, yerr=c_stds, capsize=4,
-           color="tab:orange", alpha=0.8, label="Corrected")
-    ax.set_xticks(x)
-    ax.set_xticklabels(names)
-    ax.set_title("Per-material mean +/- std")
-    ax.set_ylabel("Reconstructed attenuation")
-    ax.grid(True, alpha=0.3, axis="y")
     ax.legend()
 
     plt.tight_layout()
