@@ -55,6 +55,14 @@
       "cup_orig_mean": 25.4975528228254
     },
     {
+      "noise": 0.02,
+      "smooth": 1.0,
+      "cup_corr_mean": 7.64754342745523,
+      "cup_corr_std": 0.6038499832238992,
+      "pmma_cov_corr_mean": 0.3763758987480987,
+      "cup_orig_mean": 25.4975528228254
+    },
+    {
       "noise": 0.05,
       "smooth": 0.0,
       "cup_corr_mean": 17.945222444583564,
