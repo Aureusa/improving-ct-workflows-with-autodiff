@@ -90,7 +90,7 @@ class Workflow(ABC):
             if i != len(self.blocks) - 1:
                 # This is just to make it look prety in a print statement,
                 # it adds an arrow between blocks to indicate the flow of data
-                lines.append("   │")
-                lines.append("   ▼")
+                lines.append("   |")
+                lines.append("   v")
         return "\n".join(lines)
     

@@ -1,15 +1,9 @@
 """
-blocks.py  (2-D beam-hardening workflow)
-----------------------------------------
-Blocks for the 2-D beam-hardening correction pipeline.
-
-Block                  Role
-─────────────────────  ───────────────────────────────────────────────────────
-ProjectionData2D       Generate 2-D phantom, simulate polychromatic sinogram,
-                       save spectrum/mu .npy files for ISP2D initialisation.
-Reconstruct2D          ASTRA FBP reconstruction from a 2-D sinogram.
-CorrectProjection      Detach / move-to-CPU helper (identical to 3-D version).
-SpectralProjection2D   Differentiable polychromatic forward model (ISP2D).
+blocks.py -- blocks for the 2-D beam-hardening pipeline:
+  ProjectionData2D     : simulate the polychromatic sinogram; save spectrum/mu .npy for ISP2D.
+  Reconstruct2D        : ASTRA FBP from a 2-D sinogram.
+  CorrectProjection    : detach / move-to-CPU helper.
+  SpectralProjection2D : differentiable polychromatic forward model (ISP2D).
 """
 
 import os
@@ -31,28 +25,30 @@ from .isp_2d import ISP2D
 _DATA_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
-# ── Input block ───────────────────────────────────────────────────────────────
+# -- Input block ---------------------------------------------------------------
 
 class ProjectionData2D(Block):
     """
     Simulate a polychromatic CT acquisition of the 2-D Barba phantom.
 
     Side-effects (written to the module directory for ISP2D to load):
-        energy_bins.npy  — (E,) energy bin centres [keV]
-        fluence.npy      — (E,) spectral photon fluence per bin
-        mu_values.npy    — (2, E) linear attenuation [cm⁻¹] for PMMA and Al
+        energy_bins.npy  -- (E,) energy bin centres [keV]
+        fluence.npy      -- (E,) spectral photon fluence per bin
+        mu_values.npy    -- (2, E) linear attenuation [cm^-1] for PMMA and Al
     """
 
     def __init__(
         self,
         kvp: float = 120.0,
         th: float = 12.0,
-        dk: float = 50.0,
+        dk: float = 10.0,
         physics: str = "spekcalc",
         size: int = 256,
         scale: float = 5.0 / 256,
         add_gaussian_noise: float = 0.0,
         n_angles: int = 360,
+        noise_seed: int = 0,
+        al_filter_mm: float = 0.0,
     ):
         super().__init__()
         self.kvp               = kvp
@@ -63,15 +59,19 @@ class ProjectionData2D(Block):
         self.scale             = scale
         self.add_gaussian_noise = add_gaussian_noise
         self.n_angles          = n_angles
+        self.noise_seed        = noise_seed
+        self.al_filter_mm      = al_filter_mm
 
     def execute(self) -> np.ndarray:
-        """
-        Returns
-        -------
-        sinogram : float32 ndarray (n_angles, size)
-            Polychromatic attenuation sinogram −log(I / I₀).
-        """
+        """Return the polychromatic attenuation sinogram -log(I/I0), (n_angles, size)."""
         r = sp.Spek(kvp=self.kvp, th=self.th, dk=self.dk, physics=self.physics)
+
+        # Optional tube filtration. Without it spekpy keeps a large <20 keV soft tail
+        # (~25% of fluence at dk=2) where mu is enormous; those photons are absorbed in
+        # the object (no effect on the sinogram) but dominate the fluence-weighted mu_eff
+        # (Al 1.6 -> 53 cm^-1). A few mm of Al removes the tail and restores a sane mu_eff.
+        if self.al_filter_mm > 0:
+            r.filter("Al", self.al_filter_mm)
 
         pmma_mu = generate_linear_attenuation_params(r, "C5H8O2")
         al_mu   = generate_linear_attenuation_params(r, "Al")
@@ -83,6 +83,7 @@ class ProjectionData2D(Block):
             scale=self.scale,
             add_gaussian_noise=self.add_gaussian_noise,
             n_angles=self.n_angles,
+            seed=self.noise_seed,
         )
 
         # Persist for ISP2D.__init__
@@ -96,14 +97,10 @@ class ProjectionData2D(Block):
         return sinogram
 
 
-# ── Non-optimisable blocks ────────────────────────────────────────────────────
+# -- Non-optimisable blocks ----------------------------------------------------
 
 class Reconstruct2D(Block):
-    """
-    Reconstruct a 2-D slice from a sinogram using ASTRA FBP (or SIRT).
-
-    Accepts both numpy arrays and torch tensors as input.
-    """
+    """Reconstruct a 2-D slice from a sinogram via ASTRA FBP (or SIRT). Accepts numpy or torch."""
 
     def __init__(
         self,
@@ -119,15 +116,7 @@ class Reconstruct2D(Block):
         self._device    = device
 
     def execute(self, sinogram) -> np.ndarray:
-        """
-        Parameters
-        ----------
-        sinogram : ndarray or tensor (n_angles, n_detectors)
-
-        Returns
-        -------
-        reconstruction : float32 ndarray (n_detectors, n_detectors)
-        """
+        """sinogram (n_angles, n_det) -> reconstruction (n_det, n_det) float32."""
         if torch.is_tensor(sinogram):
             sinogram = sinogram.detach().cpu().numpy()
         return astra_back_projection_2d(
@@ -139,10 +128,7 @@ class Reconstruct2D(Block):
 
 
 class CorrectProjection(Block):
-    """
-    Detach a tensor from the autograd graph and move it to CPU as a numpy array.
-    Accepts tensors and plain numpy arrays (pass-through for the latter).
-    """
+    """Detach a tensor to CPU numpy (pass-through for numpy input)."""
 
     def __init__(
         self,
@@ -157,18 +143,14 @@ class CorrectProjection(Block):
         return projection_data
 
 
-# ── Optimisable block ─────────────────────────────────────────────────────────
+# -- Optimisable block ---------------------------------------------------------
 
 class SpectralProjection2D(Block, ISP2D):
     """
-    Differentiable 2-D polychromatic forward model.
-
-    Inherits from both Block (engine integration) and ISP2D (model logic).
-    Learnable parameters exposed to the workflow optimizer:
-        I     — spectral fluence  (energy_bins,)
-        mu    — linear attenuation  (number_of_materials, energy_bins)
-        gamma — steepness (frozen)
-        t     — Otsu-initialised thresholds (added on first forward pass)
+    Differentiable 2-D polychromatic forward model (Block + ISP2D).
+    Learnable params: I (fluence), mu (attenuation), t (Otsu thresholds, added on first
+    forward); gamma frozen. freeze_spectral=True registers I/mu non-trainable -> learn
+    only t (the honest test).
     """
 
     def __init__(
@@ -178,6 +160,11 @@ class SpectralProjection2D(Block, ISP2D):
         gamma: float = 1.0,
         energy_bins: int = 3,
         voxel_size: float = 5.0 / 256,
+        freeze_spectral: bool = False,
+        mu_eff_mode: str = "fluence",
+        spectral_perturb: float = 0.0,
+        spectral_perturb_seed: int = 0,
+        smooth_sigma: float = 0.0,
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
     ):
         Block.__init__(self)
@@ -188,10 +175,18 @@ class SpectralProjection2D(Block, ISP2D):
             gamma=gamma,
             energy_bins=energy_bins,
             voxel_size=voxel_size,
+            mu_eff_mode=mu_eff_mode,
+            spectral_perturb=spectral_perturb,
+            spectral_perturb_seed=spectral_perturb_seed,
+            smooth_sigma=smooth_sigma,
             device=device,
         )
-        self.add_param(self._I,     "I",     trainable=True)
-        self.add_param(self._mu,    "mu",    trainable=True)
+        # freeze_spectral=True -> hold I and mu fixed at their ground-truth
+        # initialisation; Block.parameters() only yields trainable params, so the
+        # optimizer will then update only t (added on the first forward pass).
+        spectral_trainable = not freeze_spectral
+        self.add_param(self._I,     "I",     trainable=spectral_trainable)
+        self.add_param(self._mu,    "mu",    trainable=spectral_trainable)
         self.add_param(self._gamma, "gamma", trainable=False)
         self._params["I"].to(device)
         self._params["mu"].to(device)

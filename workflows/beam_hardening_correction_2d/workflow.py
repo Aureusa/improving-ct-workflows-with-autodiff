@@ -1,30 +1,9 @@
 """
-workflow.py  (2-D beam-hardening correction)
---------------------------------------------
-Mirrors BeamHardeningCorrectionWorkflow from the 3-D version but operates
-entirely on 2-D data:
+workflow.py -- 2-D beam-hardening correction (mirrors the 3-D workflow, one fewer axis).
 
-  sinogram shape     : (n_angles, n_pixels)          ← 3-D: (n_pixels, n_angles, n_pixels)
-  reconstruction shape : (n_pixels, n_pixels)         ← 3-D: (n_pixels, n_pixels, n_pixels)
-
-Pipeline
---------
-  ProjectionData2D.execute()
-      → measured sinogram  (n_angles, n_pixels)
-
-  Reconstruct2D.execute(sinogram)
-      → initial reconstruction  (n_pixels, n_pixels)   [FBP, beam-hardened]
-
-  _optim_loop: fits ISP2D parameters so A_sim ≈ A_meas
-
-  SpectralProjection2D.compute_monochromatic_sinogram(reconstruction)
-      → mono sinogram  (n_angles, n_pixels)             [beam-hardening free]
-
-  CorrectProjection.execute(mono_sinogram)
-      → numpy array  (n_angles, n_pixels)
-
-  Reconstruct2D.execute(corrected_sinogram)
-      → final reconstruction  (n_pixels, n_pixels)      [corrected]
+Pipeline: ProjectionData2D -> measured sinogram -> Reconstruct2D (FBP, beam-hardened)
+-> _optim_loop fits ISP2D so A_sim ~= A_meas -> compute_corrected_sinogram ->
+CorrectProjection -> Reconstruct2D -> corrected reconstruction.
 """
 
 import os
@@ -43,17 +22,16 @@ class BeamHardeningCorrectionWorkflow2D(Workflow):
     """
     End-to-end 2-D beam-hardening correction workflow.
 
-    Parameters
-    ----------
-    optim_steps        : gradient-descent iterations
-    lr                 : Adam learning rate
-    n_angles           : number of projection angles
-    number_of_materials: number of distinct materials in the phantom
-    energy_bins        : number of spectral energy bins (must match dk/kvp settings)
-    gamma              : steepness of soft thresholding in ISP2D
-    size               : phantom pixel grid (size × size)
-    scale              : cm per pixel  (physical_width_cm / size)
-    device             : 'cuda' or 'cpu'
+    Key parameters:
+      dk                 : spectrum bin width [keV]; smaller -> more bins -> stronger hardening
+      add_gaussian_noise : fractional Gaussian noise on the sinogram (0 = clean); noise_seed for repro
+      freeze_spectral    : hold I/mu at ground truth, learn only t (honest test)
+      al_filter_mm       : added Al filtration [mm]; removes the soft tail that inflates mu_eff
+      mu_eff_mode        : 'fluence' | 'lstsq'  (see ISP2D._effective_mu)
+      correction_mode    : 'replace' (synthetic mono sinogram) | 'residual' (keeps real detail)
+      spectral_perturb   : perturb I/mu init off ground truth (per-bin +/-); honest recovery test
+      smooth_sigma       : Gaussian sigma [px] to denoise recon before segmentation (0 = off)
+    Plus optim_steps, lr, n_angles, number_of_materials, gamma, size, scale, device.
     """
 
     def __init__(
@@ -65,6 +43,16 @@ class BeamHardeningCorrectionWorkflow2D(Workflow):
         gamma: float = 100.0,
         size: int = 256,
         scale: float = 5.0 / 256,
+        dk: float = 10.0,
+        add_gaussian_noise: float = 0.02,
+        noise_seed: int = 0,
+        freeze_spectral: bool = False,
+        al_filter_mm: float = 0.0,
+        mu_eff_mode: str = "fluence",
+        correction_mode: str = "replace",
+        spectral_perturb: float = 3.0,
+        spectral_perturb_seed: int = 0,
+        smooth_sigma: float = 0.0,
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
     ):
         super().__init__()
@@ -74,8 +62,11 @@ class BeamHardeningCorrectionWorkflow2D(Workflow):
         self.add_block(ProjectionData2D(
             size=size,
             scale=scale,
-            add_gaussian_noise=0.02,
+            dk=dk,
+            add_gaussian_noise=add_gaussian_noise,
+            noise_seed=noise_seed,
             n_angles=n_angles,
+            al_filter_mm=al_filter_mm,
         ))
         self._input_data = self.ProjectionData2D.execute()
 
@@ -94,58 +85,73 @@ class BeamHardeningCorrectionWorkflow2D(Workflow):
             energy_bins=energy_bins,
             gamma=gamma,
             voxel_size=scale,   # keep physical scale consistent with ProjectionData2D
+            freeze_spectral=freeze_spectral,
+            mu_eff_mode=mu_eff_mode,
+            spectral_perturb=spectral_perturb,
+            spectral_perturb_seed=spectral_perturb_seed,
+            smooth_sigma=smooth_sigma,
             device=device,
         ))
 
         self._optim_steps = optim_steps
         self._loss_fn     = PhiLoss()
         self._lr          = lr
+        self._correction_mode = correction_mode
         self._device      = device
 
-        # Build initial optimizer (t is not yet in _params — added on first forward)
-        self._optim = torch.optim.Adam(
-            [p for _, p in self.parameters()], lr=lr
-        )
+        # Build initial optimizer (t is not yet in _params -- added on first forward)
+        self._optim = self._build_optimizer()
 
         self.to(self._device)
 
-    # ── Public API ────────────────────────────────────────────────────────────
+    def _build_optimizer(self):
+        """
+        Adam with per-parameter LR scaled by each param's magnitude. I (~1e5), mu (~1)
+        and t (~0.1-0.5) span orders of magnitude; a single absolute lr would leave I
+        frozen while t moves. Per-magnitude scaling makes the fractional step uniform.
+        """
+        groups = []
+        for name, p in self.parameters():
+            scale = float(p.detach().abs().mean().clamp_min(1e-8))
+            groups.append({"params": [p], "lr": self._lr * scale, "name": name})
+        if not groups:
+            # No trainable params registered yet (t added on first forward pass).
+            return torch.optim.Adam([torch.zeros(1, requires_grad=True)], lr=self._lr)
+        return torch.optim.Adam(groups)
+
+    # -- Public API ------------------------------------------------------------
 
     def run(self):
         """
-        Execute the full beam-hardening correction pipeline.
-
-        Returns
-        -------
-        original_reconstruction : ndarray (n_pixels, n_pixels)
-            FBP reconstruction from the polychromatic sinogram (beam-hardened).
-        final_reconstruction    : ndarray (n_pixels, n_pixels)
-            FBP reconstruction from the corrected monochromatic sinogram.
-        history                 : list[float]
-            Per-iteration loss values from the optimisation loop.
+        Run the full pipeline. Returns (original_reconstruction, final_reconstruction,
+        history): FBP of the polychromatic (beam-hardened) sinogram, FBP of the corrected
+        mono sinogram, and per-iteration loss.
         """
         # Initial (uncorrected) reconstruction
         input_data  = self._input_data
         measured_projection = torch.from_numpy(input_data).float().to(self._device)
 
         original_reconstruction = self.Reconstruct2D.execute(input_data)
-        original_reconstruction_tensor = (
+        current_recon = (
             torch.from_numpy(original_reconstruction).float().to(self._device)
         )
 
-        # Optimise ISP2D to match the measured sinogram
-        history = self._optim_loop(measured_projection, original_reconstruction_tensor)
+        # -- Single-pass correction ----------------------------------------------
+        # Fit ISP2D against A_meas using path lengths segmented from the (beam-
+        # hardened) recon, then synthesise the corrected sinogram and reconstruct it.
+        history = self._optim_loop(measured_projection, current_recon)
 
-        # Synthesise beam-hardening-free sinogram with learned parameters
-        mono_sinogram    = self.SpectralProjection2D.compute_monochromatic_sinogram(
-            original_reconstruction_tensor
+        corrected_sino = self.SpectralProjection2D.compute_corrected_sinogram(
+            current_recon,
+            y_meas=measured_projection,
+            correction_mode=self._correction_mode,
         )
-        correct_np       = self.CorrectProjection.execute(mono_sinogram)
+        correct_np           = self.CorrectProjection.execute(corrected_sino)
         final_reconstruction = self.Reconstruct2D.execute(correct_np)
 
         return original_reconstruction, final_reconstruction, history
 
-    # ── Private helpers ───────────────────────────────────────────────────────
+    # -- Private helpers -------------------------------------------------------
 
     def _optim_loop(
         self,
@@ -160,9 +166,28 @@ class BeamHardeningCorrectionWorkflow2D(Workflow):
             self.SpectralProjection2D.execute(reconstructed_data)
 
         # Rebuild optimizer to include t now that it has been added
-        self._optim = torch.optim.Adam(
-            [p for _, p in self.parameters()], lr=self._lr
-        )
+        self._optim = self._build_optimizer()
+
+        # Diagnostic: warn if the tanh transition width (1/gamma in [0,1] space) exceeds
+        # the smallest threshold gap -> masks won't be crisp and the forward model mis-fits.
+        with torch.no_grad():
+            t_init    = torch.sort(self.SpectralProjection2D.t)[0]
+            gamma_val = float(self.SpectralProjection2D.gamma)
+            width     = 1.0 / max(gamma_val, 1e-12)
+            edges     = torch.cat(
+                [torch.zeros(1).to(t_init), t_init.flatten(), torch.ones(1).to(t_init)]
+            )
+            min_gap = float(torch.diff(edges).min())
+            print(
+                f"\n[diag] normalised thresholds {t_init.cpu().numpy().round(4)}; "
+                f"gamma {gamma_val:g} -> tanh transition width {width:.4g} (in [0,1] space)"
+            )
+            if width > min_gap:
+                print(
+                    f"[diag] WARNING: transition width ({width:.4g}) exceeds the smallest "
+                    f"threshold gap ({min_gap:.4g}); soft masks will be blurry. "
+                    f"Consider gamma >~ {5.0 / max(min_gap, 1e-12):.0f}."
+                )
 
         for _ in tqdm(
             range(self._optim_steps),

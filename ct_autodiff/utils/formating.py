@@ -11,13 +11,13 @@ def box_text(text: str, padding=1):
     """
     lines = text.split("\n")
     width = max(len(line) for line in lines) + 2 * padding
-    top = "┌" + "─" * width + "┐"
-    bottom = "└" + "─" * width + "┘"
+    top = "+" + "-" * width + "+"
+    bottom = "+" + "-" * width + "+"
 
     boxed_lines = [top]
     for line in lines:
         # left-align the line and add padding
-        boxed_lines.append("│" + " " * padding + line.ljust(width - 2 * padding) + " " * padding + "│")
+        boxed_lines.append("|" + " " * padding + line.ljust(width - 2 * padding) + " " * padding + "|")
     boxed_lines.append(bottom)
     return "\n".join(boxed_lines)
     

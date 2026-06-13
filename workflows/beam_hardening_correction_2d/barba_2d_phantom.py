@@ -1,30 +1,11 @@
 #!/usr/bin/env python3
 """
-barba_2d_phantom.py
--------------------
-2-D Barba CT phantom — a 2-D analogue of barba_3D_phantom_1.py.
+barba_2d_phantom.py -- 2-D Barba CT phantom (2-D analogue of barba_3D_phantom_1.py).
 
-Phantom material labels
-  0  –  Air        (background + bubble voids)
-  1  –  PMMA       (plexiglass, C5H8O2, ρ = 1.18 g/cm³)
-  2  –  Aluminium  (Al, ρ = 2.70 g/cm³)
+Material labels: 0 = Air (background + bubbles), 1 = PMMA (C5H8O2, 1.18 g/cm^3),
+2 = Al (2.70 g/cm^3). Two overlapping PMMA ellipses + Al rods on a ring + air bubbles.
 
-Design mirrors the 3-D version:
-  • Two overlapping PMMA ellipses  →  body + secondary lobe (analogous to
-    the 3-D bottom and top ellipsoids, projected into the XY plane)
-  • Al rods arranged on a ring     →  cross-sections of the 3-D cylinders
-  • Random air-bubble voids        →  same role as in 3-D
-
-Pipeline (main block):
-  render_phantom_2d → calculate_I_2d (polychromatic) → astra_back_projection_2d (FBP)
-
-Run
----
-    python barba_2d_phantom.py
-
-Output
-------
-    phantom_2d.png | sinogram_2d.png | reconstruction_2d.png
+Run `python barba_2d_phantom.py` -> phantom_2d.png, sinogram_2d.png, reconstruction_2d.png.
 """
 
 import xraylib
@@ -36,15 +17,15 @@ import astra
 import torch
 
 
-# ── 1.  Phantom construction ─────────────────────────────────────────────────
+# -- 1.  Phantom construction -------------------------------------------------
 
 def render_phantom_2d(
     size: int = 256,
-    # Large outer ellipse — main body (≈ 3-D bottom blob)
+    # Large outer ellipse -- main body (~= 3-D bottom blob)
     outer_rx: float = 0.40,
     outer_ry: float = 0.40,
     outer_cy: float = -0.05,
-    # Small inner ellipse — secondary lobe (≈ 3-D top blob)
+    # Small inner ellipse -- secondary lobe (~= 3-D top blob)
     inner_rx: float = 0.18,
     inner_ry: float = 0.20,
     inner_cy: float = 0.18,
@@ -61,31 +42,12 @@ def render_phantom_2d(
     show: bool = True,
 ) -> np.ndarray:
     """
-    Construct a 2-D Barba CT phantom.
-
-    Parameters
-    ----------
-    size              : pixel grid (size × size)
-    outer_rx / ry     : equatorial / polar radii of the main ellipse
-    outer_cy          : y-centre of the main ellipse
-    inner_rx / ry     : radii of the secondary lobe ellipse
-    inner_cy          : y-centre of the secondary ellipse
-    n_rods            : number of Al rods on the ring
-    rod_radius        : radius of each rod
-    rod_ring_radius   : distance of rod centres from the phantom centre
-    n_bubbles         : number of air-bubble voids
-    bubble_radius     : radius of each bubble
-    bubble_xy_range   : uniform XY sampling range for bubble centres
-    seed              : RNG seed for reproducibility
-    show              : if True, saves phantom_2d.png
-
-    Returns
-    -------
-    phantom : float32 ndarray, shape (size, size)
-        0 = air, 1 = PMMA, 2 = Al
+    Construct a 2-D Barba CT phantom: (size, size) float32, 0 = air, 1 = PMMA, 2 = Al.
+    Two overlapping PMMA ellipses + n_rods Al rods on a ring + n_bubbles air voids.
+    show=True saves phantom_2d.png.
     """
     coords = np.linspace(-0.5, 0.5, size)
-    # indexing="ij": phantom[x, y]  — consistent with 3-D version
+    # indexing="ij": phantom[x, y]  -- consistent with 3-D version
     X, Y = np.meshgrid(coords, coords, indexing="ij")
 
     # Body = union of two PMMA ellipses
@@ -128,7 +90,7 @@ def _plot_phantom(
     fig, axes = plt.subplots(1, 2, figsize=(11, 5))
     fig.suptitle(title)
 
-    # Material map — transpose so X is horizontal, Y vertical, origin=lower
+    # Material map -- transpose so X is horizontal, Y vertical, origin=lower
     im = axes[0].imshow(
         phantom.T, origin="lower", cmap=cmap,
         vmin=-0.5, vmax=2.5, interpolation="nearest",
@@ -155,7 +117,7 @@ def _plot_phantom(
     print(f"Saved: {fname}")
 
 
-# ── 2.  Material / attenuation helpers ───────────────────────────────────────
+# -- 2.  Material / attenuation helpers ---------------------------------------
 
 def LUT_materials(numpy_id: float):
     """Map phantom label to xraylib compound string."""
@@ -163,12 +125,12 @@ def LUT_materials(numpy_id: float):
 
 
 def generate_mu_values(ray, compound: str) -> list:
-    """Mass attenuation coefficients [cm²/g] at each spectral energy bin."""
+    """Mass attenuation coefficients [cm^2/g] at each spectral energy bin."""
     return [xraylib.CS_Total_CP(compound, e) for e in ray.get_k()]
 
 
 def generate_linear_attenuation_params(ray, compound: str) -> np.ndarray:
-    """Linear attenuation coefficients [cm⁻¹] at each spectral energy bin."""
+    """Linear attenuation coefficients [cm^-1] at each spectral energy bin."""
     density = {"Al": 2.70, "C5H8O2": 1.18}[compound]
     return np.asarray(generate_mu_values(ray, compound)) * density
 
@@ -183,24 +145,13 @@ def de_bone(phantom: np.ndarray, material: str) -> np.ndarray:
     raise ValueError(f"Unknown material '{material}'. Use 'pmma' or 'aluminum'.")
 
 
-# ── 3.  ASTRA 2-D forward / back projection ──────────────────────────────────
+# -- 3.  ASTRA 2-D forward / back projection ----------------------------------
 
 def astra_forward_project_2d(
     volume: np.ndarray,
     n_angles: int = 360,
 ) -> np.ndarray:
-    """
-    Parallel-beam forward projection using ASTRA FP_CUDA (GPU).
-
-    Parameters
-    ----------
-    volume   : float32 ndarray (size, size)
-    n_angles : projection angles uniformly distributed over [0, π)
-
-    Returns
-    -------
-    sinogram : float32 ndarray (n_angles, size)
-    """
+    """Parallel-beam forward projection via ASTRA FP_CUDA. volume (size,size) -> sinogram (n_angles, size)."""
     size = volume.shape[0]
     angles = np.linspace(0, np.pi, n_angles, endpoint=False)
 
@@ -260,8 +211,8 @@ def _astra_back_project_2d(
 class _AstraFP2DFunction(torch.autograd.Function):
     """
     Differentiable 2-D parallel-beam forward projector.
-    Forward : FP_CUDA   (volume  → sinogram)
-    Backward: BP_CUDA   (sinogram-grad → volume-grad)
+    Forward : FP_CUDA   (volume  -> sinogram)
+    Backward: BP_CUDA   (sinogram-grad -> volume-grad)
     """
 
     @staticmethod
@@ -293,7 +244,7 @@ def astra_forward_project_2d_differentiable(
     return _AstraFP2DFunction.apply(volume_tensor, n_angles)
 
 
-# ── 4.  Polychromatic intensity simulation ────────────────────────────────────
+# -- 4.  Polychromatic intensity simulation ------------------------------------
 
 def calculate_I_2d(
     ray,
@@ -303,28 +254,13 @@ def calculate_I_2d(
     scale: float = 5.0 / 256,
     add_gaussian_noise: float = 0.02,
     n_angles: int = 360,
+    seed: int = None,
 ) -> np.ndarray:
     """
-    Simulate polychromatic CT measurements via Beer–Lambert law (2-D).
-
-    Each spectral bin contributes I₀ · exp(−μ_pmma · L_pmma − μ_al · L_al),
-    where L is the path length [cm] through each material.  A log-ratio
-    sinogram −log(I / I₀) is returned, mimicking the scanner output.
-
-    Parameters
-    ----------
-    ray               : SpekPy Spek object (already generated)
-    mu_pmma           : linear attenuation [cm⁻¹], length = energy bins
-    mu_aluminum       : linear attenuation [cm⁻¹], length = energy bins
-    phantom           : float32 (size, size) — material label array
-    scale             : cm per voxel  (physical_width_cm / n_pixels)
-    add_gaussian_noise: fractional Gaussian noise σ relative to max(I)
-    n_angles          : number of projection angles
-
-    Returns
-    -------
-    sinogram : float32 (n_angles, size)
-        Effective polychromatic attenuation  −log(I / I₀)
+    Polychromatic Beer-Lambert CT simulation (2-D): sum over spectral bins of
+    I0*exp(-mu_pmma*L_pmma - mu_al*L_al), returned as -log(I/I0). Optional constant-sigma
+    Gaussian noise (relative to max I) added in the intensity domain (seed for repro).
+    Returns the sinogram (n_angles, size).
     """
     pmma_proj = astra_forward_project_2d(de_bone(phantom, "pmma"),     n_angles)
     al_proj   = astra_forward_project_2d(de_bone(phantom, "aluminum"), n_angles)
@@ -336,14 +272,15 @@ def calculate_I_2d(
         p = pmma_proj * mu_pmma[n] * scale + al_proj * mu_aluminum[n] * scale
         I_total += I0 * np.exp(-p)
 
-    noise   = np.random.normal(0, add_gaussian_noise * np.max(I_total), I_total.shape)
+    rng     = np.random.default_rng(seed)
+    noise   = rng.normal(0, add_gaussian_noise * np.max(I_total), I_total.shape)
     I_total = np.clip(I_total + noise, 1e-10, None)
 
     I0_total = float(np.sum(fluence))
     return (-np.log(I_total / I0_total)).astype(np.float32)
 
 
-# ── 5.  FBP / SIRT reconstruction ────────────────────────────────────────────
+# -- 5.  FBP / SIRT reconstruction --------------------------------------------
 
 def astra_back_projection_2d(
     sinogram: np.ndarray,
@@ -352,18 +289,8 @@ def astra_back_projection_2d(
     iterations: int = 200,
 ) -> np.ndarray:
     """
-    Reconstruct a 2-D slice from a sinogram.
-
-    Parameters
-    ----------
-    sinogram   : float32 (n_angles, n_detectors)
-    n_angles   : must match sinogram.shape[0]
-    algorithm  : 'FBP_CUDA' (default, fast) or 'SIRT_CUDA' (iterative)
-    iterations : number of iterations — used only for SIRT_CUDA
-
-    Returns
-    -------
-    reconstruction : float32 (n_detectors, n_detectors)
+    Reconstruct a 2-D slice from a sinogram. algorithm = 'FBP_CUDA' (default) or
+    'SIRT_CUDA' (iterative, uses `iterations`). Returns (n_det, n_det) float32.
     """
     n_det  = sinogram.shape[1]
     angles = np.linspace(0, np.pi, n_angles, endpoint=False)
@@ -395,7 +322,7 @@ def astra_back_projection_2d(
     return recon
 
 
-# ── 6.  Plotting helpers ──────────────────────────────────────────────────────
+# -- 6.  Plotting helpers ------------------------------------------------------
 
 def plot_sinogram_2d(
     sinogram: np.ndarray,
@@ -414,11 +341,11 @@ def plot_sinogram_2d(
     )
     axes[0].set_title("Sinogram")
     axes[0].set_xlabel("Detector position [pixels]")
-    axes[0].set_ylabel("Angle [°]")
+    axes[0].set_ylabel("Angle [ deg]")
 
     mid_angle = n_angles // 2
     axes[1].plot(sinogram[mid_angle], lw=1.2)
-    axes[1].set_title(f"Line profile at angle {mid_angle * 180 // n_angles}°")
+    axes[1].set_title(f"Line profile at angle {mid_angle * 180 // n_angles} deg")
     axes[1].set_xlabel("Detector position [pixels]")
     axes[1].set_ylabel("Effective attenuation")
     axes[1].grid(True, alpha=0.3)
@@ -437,15 +364,15 @@ def plot_reconstruction_2d(
 ) -> None:
     """
     Save:
-      • Reconstruction image
-      • Central line profile (for spotting the beam-hardening cupping artefact)
-      • Ground-truth phantom for visual comparison (optional)
+      - Reconstruction image
+      - Central line profile (for spotting the beam-hardening cupping artefact)
+      - Ground-truth phantom for visual comparison (optional)
     """
     ncols = 3 if phantom is not None else 2
     fig, axes = plt.subplots(1, ncols, figsize=(5 * ncols, 5))
     fig.suptitle(title)
 
-    # Reconstruction — transpose to match phantom orientation
+    # Reconstruction -- transpose to match phantom orientation
     axes[0].imshow(reconstruction.T, origin="lower", cmap="gray")
     axes[0].set_title("Reconstruction")
     axes[0].axis("off")
@@ -474,17 +401,17 @@ def plot_reconstruction_2d(
     print(f"Saved: {fname}")
 
 
-# ── 7.  Entry point ───────────────────────────────────────────────────────────
+# -- 7.  Entry point -----------------------------------------------------------
 
 if __name__ == "__main__":
     SIZE    = 256
-    # scale: cm per voxel — controls physical beam-hardening severity.
-    # 5.0 cm total object width → SCALE ≈ 0.020 cm/voxel gives clearly
+    # scale: cm per voxel -- controls physical beam-hardening severity.
+    # 5.0 cm total object width -> SCALE ~= 0.020 cm/voxel gives clearly
     # visible polychromatic cupping in the reconstruction.
     SCALE   = 5.0 / SIZE
 
-    # ── Spectrum ──────────────────────────────────────────────────────────────
-    print("Generating X-ray spectrum (120 kV, 12° anode) …")
+    # -- Spectrum --------------------------------------------------------------
+    print("Generating X-ray spectrum (120 kV, 12 deg anode) ...")
     ray = sp.Spek(kvp=120, th=12, physics="spekcalc")
 
     mu_pmma = generate_linear_attenuation_params(ray, "C5H8O2")
@@ -496,27 +423,27 @@ if __name__ == "__main__":
     energy_bins = ray.get_k()
     np.save("energy_bins_2d.npy", energy_bins)
 
-    # ── Phantom ───────────────────────────────────────────────────────────────
-    print("Rendering 2-D phantom …")
-    phantom = render_phantom_2d(size=SIZE, show=True)   # → phantom_2d.png
+    # -- Phantom ---------------------------------------------------------------
+    print("Rendering 2-D phantom ...")
+    phantom = render_phantom_2d(size=SIZE, show=True)   # -> phantom_2d.png
 
-    # ── Polychromatic sinogram ────────────────────────────────────────────────
-    print("Computing polychromatic sinogram (360 angles) …")
+    # -- Polychromatic sinogram ------------------------------------------------
+    print("Computing polychromatic sinogram (360 angles) ...")
     sinogram = calculate_I_2d(
         ray, mu_pmma, mu_al, phantom,
         scale=SCALE, add_gaussian_noise=0.02,
     )
     plot_sinogram_2d(
         sinogram,
-        title="Polychromatic Sinogram — 2-D Barba Phantom",
+        title="Polychromatic Sinogram -- 2-D Barba Phantom",
     )
 
-    # ── FBP reconstruction ────────────────────────────────────────────────────
-    print("Running FBP reconstruction (Ram-Lak filter) …")
+    # -- FBP reconstruction ----------------------------------------------------
+    print("Running FBP reconstruction (Ram-Lak filter) ...")
     recon = astra_back_projection_2d(sinogram, algorithm="FBP_CUDA")
     plot_reconstruction_2d(
         recon, phantom=phantom,
-        title="FBP Reconstruction — 2-D Barba Phantom",
+        title="FBP Reconstruction -- 2-D Barba Phantom",
     )
 
     print("\nAll done.  Output files:")

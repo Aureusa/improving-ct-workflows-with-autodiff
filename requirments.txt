@@ -1,6 +1,16 @@
-plotly
-spekpy
-xraylib
-matplotlib
+# Python dependencies for improving-ct-workflows-with-autodiff
+#
+# NOTE: astra-toolbox has no pip wheels on Windows. Install it via conda:
+#   conda install -c astra-toolbox -c nvidia astra-toolbox
+# Everything else below is pip-installable.
+
+torch          # autograd; CUDA build recommended (cu118 confirmed working)
 numpy
-torch
+matplotlib
+plotly         # used by barba_3D_phantom.py and cylinder.ipynb
+scikit-image   # threshold_multiotsu (material segmentation)
+spekpy         # X-ray source spectrum
+xraylib        # mass attenuation coefficients
+tqdm           # optimisation progress bar
+
+# astra-toolbox  # REQUIRED for FP/FBP — conda only (see note above)
