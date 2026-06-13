@@ -108,7 +108,7 @@ def sweep_2d():
 
 
 # ----------------------------------- 3-D --------------------------------------
-def _run3d(dk, noise=0.0, seed=0, smooth=0.0, steps=200, html_path=None):
+def _run3d(dk, noise=0.0, seed=0, smooth=0.0, steps=300, html_path=None):
     from workflows.beam_hardening_correction.workflow import BeamHardeningCorrectionWorkflow
     from workflows.beam_hardening_correction.barba_3D_phantom_1 import render_phantom
     from plot_3d_interactive import _metrics, build_html
