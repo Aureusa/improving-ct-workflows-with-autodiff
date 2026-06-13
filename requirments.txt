@@ -4,7 +4,7 @@
 #   conda install -c astra-toolbox -c nvidia astra-toolbox
 # Everything else below is pip-installable.
 
-torch          # autograd; CUDA build recommended (cu118 confirmed working)
+torch          # autograd; CUDA build recommended (check cuda with nvidia-smi)
 numpy
 matplotlib
 plotly         # used by barba_3D_phantom.py and cylinder.ipynb

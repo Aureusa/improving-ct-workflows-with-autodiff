@@ -14,13 +14,5 @@ og_work/
 _arrays_3d/
 reconstruction_3d*.html
 
-# Legacy / regenerated output figures (3-D scatter + standalone phantom script)
-3d_phantom.png
-side_projection.png
-3d_reconstruction.png
-reconstruction_slices.png
-line_profile.png
-sinogram.png
-original_reconstruction.png
-final_reconstruction.png
-optimization_history.png
+# Logs
+logs/
