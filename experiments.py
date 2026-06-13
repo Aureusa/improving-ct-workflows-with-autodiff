@@ -127,13 +127,18 @@ def _run3d(dk, noise=0.0, seed=0, smooth=0.0, steps=300, html_path=None):
 
 
 def sweep_3d():
+    # 3-D is single-seed, so the sweep config == the figure config; compute the metrics
+    # and render the HTML in the SAME workflow run (no separate fig3d pass needed).
     out = {"dk": [], "noise": []}
     for dk in (5, 20):                       # high hardening vs low hardening (no noise)
-        r = dict(dk=dk, droop_pct=_droop(120, dk)[1], **_run3d(dk))
+        html = os.path.join(_RESULTS, "3d", f"dk{dk}.html")
+        r = dict(dk=dk, droop_pct=_droop(120, dk)[1], **_run3d(dk, html_path=html))
         out["dk"].append(r); _save("3d", out)
         print(f"DONE 3d-dk | dk={dk:<3} droop {r['droop_pct']:5.1f}% | cup {r['cup_orig']:6.2f} -> {r['cup_corr']:7.2f}")
     for noise, smooth in [(0.02, 0.0), (0.05, 0.0), (0.05, 1.0)]:   # noise effect at dk=5
-        r = dict(noise=noise, smooth=smooth, **_run3d(5, noise=noise, smooth=smooth))
+        sfx = f"_smooth{smooth}" if smooth else ""
+        html = os.path.join(_RESULTS, "3d", f"dk5_noise{noise}{sfx}.html")
+        r = dict(noise=noise, smooth=smooth, **_run3d(5, noise=noise, smooth=smooth, html_path=html))
         out["noise"].append(r); _save("3d", out)
         print(f"DONE 3d-noise | noise={noise} smooth={smooth} | cup {r['cup_orig']:6.2f} -> {r['cup_corr']:7.2f}  pmmaCoV {r['pmma_cov_corr']:.3f}")
     return out
