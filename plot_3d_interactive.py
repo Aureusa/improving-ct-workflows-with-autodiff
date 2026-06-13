@@ -112,12 +112,9 @@ def build_html(original, corrected, phantom, history, out_path, vol_stride=2, n_
     fig3d.add_trace(vol(original), 1, 1)
     fig3d.add_trace(vol(corrected), 1, 2)
     fig3d.update_layout(height=620, margin=dict(l=0, r=0, t=40, b=0),
-                        title="3-D reconstructions -- drag to rotate, scroll to zoom",
+                        title="3-D reconstructions - drag to rotate, scroll to zoom",
                         scene=dict(aspectmode="data"), scene2=dict(aspectmode="data"))
 
-    # Soft-tissue window centred on PMMA so the subtle cupping/streaks show. The full
-    # air->Al range washes them out (Al is ~4x brighter) -- the main reason 3-D "looks
-    # flat" vs the 2-D profiles. Al saturates white in this window (that's fine).
     if phantom is not None and (phantom == 1.0).any():
         pm = original[phantom == 1.0]
         wlo, whi = float(pm.mean() - 3 * pm.std()), float(pm.mean() + 3 * pm.std())
@@ -138,7 +135,7 @@ def build_html(original, corrected, phantom, history, out_path, vol_stride=2, n_
         vis = [False] * (2 * len(idxs)); vis[2 * i] = True; vis[2 * i + 1] = True
         steps.append(dict(method="update", args=[{"visible": vis}], label=str(int(z))))
     figS.update_layout(height=470,
-                       title="Axial slice explorer (PMMA soft-tissue window; Al saturates) -- drag the slider",
+                       title="Axial slice explorer - drag the slider",
                        sliders=[dict(active=mid, steps=steps, currentvalue={"prefix": "axial z = "})])
     _square_axes(figS, 2)
 
@@ -150,21 +147,8 @@ def build_html(original, corrected, phantom, history, out_path, vol_stride=2, n_
         for c_i, sl in enumerate((src[:, :, cz].T, src[:, cy, :].T, src[cx, :, :].T)):
             figC.add_trace(go.Heatmap(z=sl, zmin=vmin, zmax=vmax, colorscale="Gray", showscale=False),
                            r_i + 1, c_i + 1)
-    figC.update_layout(height=620, title="Central cuts -- original (top) vs corrected (bottom)")
+    figC.update_layout(height=620, title="Central cuts - original (top) vs corrected (bottom)")
     _square_axes(figC, 6)
-
-    # 3b) beam-hardening artifact = original - corrected (THE clearest view of the cup + streaks)
-    diff = original - corrected
-    omask = (phantom > 0) if phantom is not None else np.ones_like(original, dtype=bool)
-    dabs = float(np.percentile(np.abs(diff[omask]), 99)) if omask.any() else float(np.abs(diff).max())
-    dabs = dabs or 1e-6
-    figD = make_subplots(rows=1, cols=3, subplot_titles=("axial (z)", "coronal (y)", "sagittal (x)"))
-    for c_i, sl in enumerate((diff[:, :, cz].T, diff[:, cy, :].T, diff[cx, :, :].T)):
-        figD.add_trace(go.Heatmap(z=sl, zmin=-dabs, zmax=dabs, zmid=0, colorscale="RdBu",
-                                  reversescale=True, showscale=(c_i == 2)), 1, c_i + 1)
-    figD.update_layout(height=360, title="Beam-hardening artifact = original - corrected "
-                       "(the cup + streaks the correction removed; flat/white = no artifact)")
-    _square_axes(figD, 3)
 
     # 4) profiles: central line + PMMA radial (cupping)
     figP = make_subplots(rows=1, cols=2, subplot_titles=(
@@ -206,18 +190,17 @@ def build_html(original, corrected, phantom, history, out_path, vol_stride=2, n_
         fig3d.to_html(full_html=False, include_plotlyjs=True),
         figS.to_html(full_html=False, include_plotlyjs=False),
         figC.to_html(full_html=False, include_plotlyjs=False),
-        figD.to_html(full_html=False, include_plotlyjs=False),
         figP.to_html(full_html=False, include_plotlyjs=False),
         figH.to_html(full_html=False, include_plotlyjs=False),
         figL.to_html(full_html=False, include_plotlyjs=False),
     ]
     html = (
         "<html><head><meta charset='utf-8'>"
-        "<title>3-D Beam-Hardening Correction -- interactive</title></head>"
+        "<title>3-D Beam-Hardening Correction - interactive</title></head>"
         "<body style='font-family:sans-serif;max-width:1300px;margin:24px auto;padding:0 12px'>"
-        "<h1>3-D Beam-Hardening Correction -- interactive results</h1>"
+        "<h1>3-D Beam-Hardening Correction - interactive results</h1>"
         + (f"<h2 style='color:#555;margin-top:0'>{title}</h2>" if title else "")
-        + "<p>lstsq &mu;<sub>eff</sub> + residual correction. Drag the 3-D views to rotate; "
+        + "Residual correction. Drag the 3-D views to rotate; "
         "use the slider to scrub slices.</p>"
         + table + "".join(parts) + "</body></html>"
     )
