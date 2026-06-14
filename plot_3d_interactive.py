@@ -183,7 +183,8 @@ def build_html(original, corrected, phantom, history, out_path, vol_stride=2, n_
         figL.add_trace(go.Scatter(y=list(history), mode="lines", name="loss"))
     figL.update_layout(height=320, title="Optimisation loss",
                        xaxis_title="step", yaxis_title="MSE loss",
-                       yaxis=dict(type="log", exponentformat="power", dtick=1))
+                       yaxis=dict(type="log", exponentformat="power",
+                                  showexponent="all", showticklabels=True))
 
     table = _metrics_table_html(*_metrics(original, corrected, phantom)) if phantom is not None else ""
 

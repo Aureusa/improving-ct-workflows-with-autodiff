@@ -83,7 +83,7 @@ def _run2d(dk, noise=0.0, seed=0, smooth=0.0, fig_path=None):
 
 def sweep_2d():
     out = {"dk": [], "noise": []}
-    # Exp A: hardening vs dk (no noise) -- 120 kVp
+    # Exp A: hardening vs dk (no noise) - 120 kVp
     for dk in (2, 5, 10, 20):
         r = dict(dk=dk, droop_pct=_droop(120, dk)[1], **_run2d(dk))
         out["dk"].append(r); _save("2d", out)
@@ -127,20 +127,25 @@ def _run3d(dk, noise=0.0, seed=0, smooth=0.0, steps=300, html_path=None):
 
 
 def sweep_3d():
-    # 3-D is single-seed, so the sweep config == the figure config; compute the metrics
-    # and render the HTML in the SAME workflow run (no separate fig3d pass needed).
     out = {"dk": [], "noise": []}
-    for dk in (5, 20):                       # high hardening vs low hardening (no noise)
+    for dk in (5, 20):                       
         html = os.path.join(_RESULTS, "3d", f"dk{dk}.html")
         r = dict(dk=dk, droop_pct=_droop(120, dk)[1], **_run3d(dk, html_path=html))
         out["dk"].append(r); _save("3d", out)
         print(f"DONE 3d-dk | dk={dk:<3} droop {r['droop_pct']:5.1f}% | cup {r['cup_orig']:6.2f} -> {r['cup_corr']:7.2f}")
-    for noise, smooth in [(0.02, 0.0), (0.05, 0.0), (0.05, 1.0)]:   # noise effect at dk=5
+    for noise, smooth in [(0.02, 0.0), (0.05, 0.0), (0.05, 1.0)]:   # noise effect at dk=5 (seed-averaged)
         sfx = f"_smooth{smooth}" if smooth else ""
-        html = os.path.join(_RESULTS, "3d", f"dk5_noise{noise}{sfx}.html")
-        r = dict(noise=noise, smooth=smooth, **_run3d(5, noise=noise, smooth=smooth, html_path=html))
+        rows = []
+        for seed in (0, 1, 2):                       # only seed 0 renders the HTML (mirrors 2-D)
+            html = os.path.join(_RESULTS, "3d", f"dk5_noise{noise}{sfx}.html") if seed == 0 else None
+            rows.append(_run3d(5, noise=noise, seed=seed, smooth=smooth, html_path=html))
+        r = dict(noise=noise, smooth=smooth,
+                 cup_orig_mean=float(np.mean([x["cup_orig"] for x in rows])),
+                 cup_corr_mean=float(np.mean([abs(x["cup_corr"]) for x in rows])),
+                 cup_corr_std=float(np.std([abs(x["cup_corr"]) for x in rows])),
+                 pmma_cov_corr_mean=float(np.mean([x["pmma_cov_corr"] for x in rows])))
         out["noise"].append(r); _save("3d", out)
-        print(f"DONE 3d-noise | noise={noise} smooth={smooth} | cup {r['cup_orig']:6.2f} -> {r['cup_corr']:7.2f}  pmmaCoV {r['pmma_cov_corr']:.3f}")
+        print(f"DONE 3d-noise | noise={noise} smooth={smooth} | |cup_corr| {r['cup_corr_mean']:.2f}+/-{r['cup_corr_std']:.2f}  pmmaCoV {r['pmma_cov_corr_mean']:.3f}")
     return out
 
 
