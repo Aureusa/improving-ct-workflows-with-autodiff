@@ -21,8 +21,8 @@ def _save(mode, data):
 
 
 def _render2d(orig, final, phantom, hist, png_path, title=""):
-    """Render comparison + cupping PNGs in a torch/astra-free subprocess (matplotlib
-    crashes in-process alongside torch+astra). png_path = the comparison figure path."""
+    """Render comparison + cupping PNGs in a torch/astra-free subprocess. 
+    png_path = the comparison figure path."""
     import tempfile, subprocess, shutil
     d = tempfile.mkdtemp()
     np.save(os.path.join(d, "original.npy"), orig)
