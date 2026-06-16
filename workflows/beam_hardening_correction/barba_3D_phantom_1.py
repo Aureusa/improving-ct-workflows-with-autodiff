@@ -4,7 +4,7 @@ import spekpy as sp
 # plotting and numpy
 import numpy as np
 import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
+from mpl_toolkits.mplot3d import Axes3D  
 
 #astra
 import astra
@@ -378,17 +378,6 @@ def astra_back_projection(sinogram, n_angles=360):
     astra.algorithm.delete(algorithm_id)
     
     return backprojection
-# def run_projection
-
-
-# def calculate_attenuation
-
-# #WHERE WAS THE NOISE ADDED?
-
-# def sum_attnuations
-
-# def 
-
 
 
 def plot_reconstruction(reconstruction, title="FBP Reconstruction"):
@@ -443,12 +432,9 @@ def plot_reconstruction(reconstruction, title="FBP Reconstruction"):
 
 
 
-# def get_incidence(): 
-#     pass
 
 if __name__ == "__main__":
-   # render_phantom()
-    # Work around SpekPy v2 + NumPy 2.x incompatibility in default physics path.
+
     r = sp.Spek(kvp=120, th=12, physics="spekcalc")  # Generate a spectrum (120 kV, 12 degree tube angle)
     
     pmma_mu = generate_linear_attenuation_params(r, ("C5H8O2"))  # Get attenuation coefficients for PMMA
@@ -471,6 +457,3 @@ if __name__ == "__main__":
     
     reconstruction = astra_back_projection(I)
     plot_reconstruction(reconstruction, title="FBP Reconstruction")
-    #Simulate polychromatic ray - maybe for the sinogram stage
- 
-#Simulate ray effect from a 3D - maybe for the sinogram stage

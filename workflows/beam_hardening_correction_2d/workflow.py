@@ -1,11 +1,3 @@
-"""
-workflow.py -- 2-D beam-hardening correction (mirrors the 3-D workflow, one fewer axis).
-
-Pipeline: ProjectionData2D -> measured sinogram -> Reconstruct2D (FBP, beam-hardened)
--> _optim_loop fits ISP2D so A_sim ~= A_meas -> compute_corrected_sinogram ->
-CorrectProjection -> Reconstruct2D -> corrected reconstruction.
-"""
-
 import os
 
 import numpy as np

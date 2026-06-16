@@ -1,10 +1,3 @@
-"""
-isp_2d.py -- 2-D Iterative Spectral Projection model.
-
-Same structure as the 3-D ISP with one fewer spatial axis: recon (P,P), sinogram
-(A,P), masks (M,P,P); einsums 'em,map->eap' and 'm,map->ap'.
-"""
-
 import os
 
 import numpy as np
@@ -83,8 +76,7 @@ class ISP2D(torch.nn.Module):
         # Optionally perturb the spectral init AWAY from ground truth (per-bin
         # multiplicative +/-spectral_perturb). ISP2D otherwise loads I/mu from the
         # exact spectrum that generated the data, so with freeze_spectral=False the
-        # optimisation would still *start* at truth -- "loss goes down" then proves
-        # nothing. A nonzero perturb makes recovery an honest test.
+        # optimisation would still *start* at truth.
         if spectral_perturb > 0:
             g = torch.Generator().manual_seed(spectral_perturb_seed)
             I_fac  = 1.0 + spectral_perturb * (2.0 * torch.rand(self._I.shape,  generator=g) - 1.0)
@@ -271,11 +263,11 @@ class ISP2D(torch.nn.Module):
         if getattr(self, "smooth_sigma", 0.0) and self.smooth_sigma > 0:
             x = self._gaussian_blur(x, self.smooth_sigma)
 
-        # Normalise the reconstruction to [0,1] before thresholding so that gamma
-        # is decoupled from the physical recon scale (~0.005-0.02). On raw values
-        # gamma*(x-t) stays small and tanh never saturates -> mushy masks. Working
-        # in [0,1] lets a fixed gamma produce crisp masks. The recon is a constant
-        # input (no grad through x), so its min/max are safe to use.
+        
+        # Normalise the recon to [0,1] before thresholding so that gamma is decoupled
+        # from the physical recon scale. On raw values gamma*(x-t) stays
+        # tiny and tanh never saturates -> mushy masks -> the forward model cannot match
+        # the data. 
         x_min = x.min()
         x_max = x.max()
         x_norm = (x - x_min) / (x_max - x_min).clamp_min(1e-8)

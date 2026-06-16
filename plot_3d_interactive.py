@@ -1,12 +1,3 @@
-"""
-plot_3d_interactive.py -- interactive plotly viewer for the 3-D results. Produces one
-self-contained HTML: 3-D original/corrected volumes, axial-slice slider, central
-orthogonal cuts, profiles (centre line + PMMA radial cupping), attenuation histograms,
-loss curve, and a metrics table. Standalone (numpy + plotly only):
-
-    python plot_3d_interactive.py --arrays _arrays_3d --out reconstruction_3d.html
-"""
-
 import argparse
 import os
 
@@ -75,11 +66,6 @@ def _metrics_table_html(rows, cup):
 # -- figure builder ------------------------------------------------------------
 
 def _square_axes(fig, n_panels):
-    """
-    Make heatmap panels render square. A blanket update_yaxes(scaleanchor='x') wrongly
-    anchors every y-axis to panel 1's x-axis -> panels 2..N stretch; instead anchor each
-    y-axis to its own x-axis and constrain to the cell domain (letterbox, not distort).
-    """
     for i in range(1, n_panels + 1):
         sfx = "" if i == 1 else str(i)
         fig.update_layout(**{f"yaxis{sfx}": dict(scaleanchor=f"x{sfx}", scaleratio=1,

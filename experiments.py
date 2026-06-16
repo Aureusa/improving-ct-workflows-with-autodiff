@@ -10,8 +10,6 @@ _RESULTS = os.path.join(_HERE, "results")
 os.makedirs(os.path.join(_RESULTS, "2d"), exist_ok=True)
 os.makedirs(os.path.join(_RESULTS, "3d"), exist_ok=True)
 
-# matplotlib hard-crashes (exit 127 / 0xC06D7FFF) in the Tomography conda env even in a
-# fresh process, so render the 2-D PNGs with the base anaconda python (working matplotlib).
 _PLOT_PY = r"C:/Users/ivanb/anaconda3/python.exe"
 if not os.path.exists(_PLOT_PY):
     _PLOT_PY = sys.executable

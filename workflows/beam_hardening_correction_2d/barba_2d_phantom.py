@@ -1,13 +1,3 @@
-#!/usr/bin/env python3
-"""
-barba_2d_phantom.py -- 2-D Barba CT phantom (2-D analogue of barba_3D_phantom_1.py).
-
-Material labels: 0 = Air (background + bubbles), 1 = PMMA (C5H8O2, 1.18 g/cm^3),
-2 = Al (2.70 g/cm^3). Two overlapping PMMA ellipses + Al rods on a ring + air bubbles.
-
-Run `python barba_2d_phantom.py` -> phantom_2d.png, sinogram_2d.png, reconstruction_2d.png.
-"""
-
 import xraylib
 import spekpy as sp
 import numpy as np

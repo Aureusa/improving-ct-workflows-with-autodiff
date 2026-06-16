@@ -1,18 +1,3 @@
-"""
-main_2d.py -- primary 2-D results runner.
-
-Most robust config:
-mu_eff_mode="lstsq" (immune to soft-tail inflation), correction_mode="residual"
-(corrects the measured sinogram, keeps real detail), freeze_spectral=False
-(learns the spectrum), dk=2. Result: PMMA cupping ~25% -> ~3%.
-
-Outputs comparison_2d.png, cupping_2d.png, optimization_history_2d.png + a report.
-Plotting runs in a SUBPROCESS (plot_clean_results.py) because matplotlib crashes
-alongside torch+astra+MKL in this conda env.
-
-Run: python main_2d.py   (requires ASTRA + CUDA)
-"""
-
 import os
 import shutil
 import subprocess
@@ -56,8 +41,8 @@ if __name__ == "__main__":
         add_gaussian_noise=0.01,      # clean demonstration (set >0 for noisy data)
         mu_eff_mode="lstsq",         # least-squares effective attenuation
         correction_mode="residual",  # correct the measured sinogram
-        freeze_spectral=False,       # learn the spectrum -- honest, not ground-truth-pinned
-        spectral_perturb=0.8,        # perturb init spectrum by +/-30% (makes recovery non-trivial
+        freeze_spectral=False,       # learn the spectrum
+        spectral_perturb=0.8,        # perturb init spectrum 
         smooth_sigma=1.0,            # denoise recon before segmentation (stabilises masks under noise)
     )
 

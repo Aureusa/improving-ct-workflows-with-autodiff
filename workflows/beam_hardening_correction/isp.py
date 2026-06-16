@@ -33,7 +33,7 @@ class ISP(torch.nn.Module):
         if fluence_vals.shape != (energy_bins,):
             raise ValueError(f"fluence.npy has shape {fluence_vals.shape}, but expected ({energy_bins},)")
 
-        self._I = torch.nn.Parameter(torch.from_numpy(np.array(fluence_vals)).float(), requires_grad=True) # (energy_bins,) -- spectral photon fluence
+        self._I = torch.nn.Parameter(torch.from_numpy(np.array(fluence_vals)).float(), requires_grad=True) # (energy_bins,) - spectral photon fluence
         self._mu = torch.nn.Parameter(torch.from_numpy(mu_vals).float(), requires_grad=True) # (number_of_materials, energy_bins)
 
         # Optionally perturb the spectral init AWAY from ground truth (per-bin
@@ -199,19 +199,19 @@ class ISP(torch.nn.Module):
         x : (n_pixels, n_pixels, n_pixels) reconstruction volume
         returns : (number_of_materials, n_pixels, n_pixels, n_pixels)
         """
-        # Optional denoising BEFORE segmentation (mirrors 2-D ISP2D._s). A noisy recon
-        # makes the tanh thresholds flip labels on per-voxel noise -> speckled masks ->
-        # wrong path lengths -> corrupted fit + correction. Gaussian-smoothing the recon
-        # first stabilises the masks. Constant input (no grad through x). Off by default.
+        # Optional denoising BEFORE segmentation. A noisy recon makes the tanh
+        # thresholds flip labels on per-voxel noise (a voxel near a threshold
+        # randomly crosses it) -> speckled masks -> wrong path lengths -> the fit and
+        # the mu_eff/correction are both corrupted. Gaussian-smoothing the recon
+        # first stabilises the masks. The recon is a constant input (no grad through
+        # x), so this is pure preprocessing. Off by default (smooth_sigma=0).
         if getattr(self, "smooth_sigma", 0.0) and self.smooth_sigma > 0:
             x = self._gaussian_blur3d(x, self.smooth_sigma)
 
         # Normalise the recon to [0,1] before thresholding so that gamma is decoupled
-        # from the physical recon scale (~0.002-0.008). On raw values gamma*(x-t) stays
+        # from the physical recon scale. On raw values gamma*(x-t) stays
         # tiny and tanh never saturates -> mushy masks -> the forward model cannot match
-        # the data. Working in [0,1] lets a fixed gamma produce crisp masks. The recon
-        # is a constant input (no grad through x), so its min/max are safe.
-        # (2-D Sec 8.3 fix, ported to 3-D.)
+        # the data. 
         x_min = x.min()
         x_max = x.max()
         x_norm = (x - x_min) / (x_max - x_min).clamp_min(1e-8)

@@ -1,25 +1,3 @@
-"""
-main.py -- 3-D entry point
-=========================
-Runs the 3-D beam-hardening correction (least-squares mu_eff + residual correction,
-normalized soft-segmentation + per-parameter LR) and builds an
-INTERACTIVE plotly viewer you open in a browser:
-
-    reconstruction_3d.html
-
-The viewer lets you rotate/zoom the original and corrected volumes, scrub axial slices,
-inspect the central orthogonal cuts, and read profiles / histograms / metrics. Plotly is
-pure-Python (no native rendering), so this runs end-to-end without the matplotlib+torch+
-astra crash. The reconstruction arrays are also saved to `_arrays_3d/` so the viewer can
-be rebuilt without re-running the (heavy) pipeline:
-
-    python plot_3d_interactive.py --arrays _arrays_3d --out reconstruction_3d.html
-
-Run
----
-    python main.py            # requires ASTRA + CUDA (FP3D / SIRT3D)
-"""
-
 import os
 import sys
 
@@ -86,7 +64,7 @@ if __name__ == "__main__":
     np.save(os.path.join(arrays_dir, "phantom.npy"), phantom)
     np.save(os.path.join(arrays_dir, "history.npy"), np.asarray(history, dtype=np.float32))
 
-    # Build the interactive HTML (plotly is pure-Python -> safe in this process)
+    # Build the interactive HTML 
     out_html = os.path.join(_HERE, "reconstruction_3d.html")
     build_html(original, final, phantom, np.asarray(history), out_html)
 

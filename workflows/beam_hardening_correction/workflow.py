@@ -68,9 +68,7 @@ class BeamHardeningCorrectionWorkflow(Workflow):
     def _build_optimizer(self):
         """
         Adam with per-parameter learning rates scaled by each parameter's own
-        magnitude, so every group takes ~`lr` *fractional* steps per iteration.
-        I (~1e5 photons), mu (~1 cm^-1) and t span many orders of magnitude; a single
-        absolute lr leaves I effectively frozen while t moves. (2-D Sec 8.3 fix, ported.)
+        magnitude, so every group takes `lr` *fractional* steps per iteration.
         """
         groups = []
         for name, p in self.parameters():
@@ -97,7 +95,7 @@ class BeamHardeningCorrectionWorkflow(Workflow):
         # Convert original_reconstruction to torch tensor for optimization
         original_reconstruction_tensor = torch.from_numpy(original_reconstruction).float().to(self._device)
         
-        # Optimization loop -- fits ISP parameters so the model matches the measured sinogram
+        # Optimization loop - fits ISP parameters so the model matches the measured sinogram
         history = self._optim_loop(measured_projection, original_reconstruction_tensor)
 
         # After optimisation, compute a monochromatic-equivalent sinogram using the

@@ -1,11 +1,3 @@
-"""
-blocks.py -- blocks for the 2-D beam-hardening pipeline:
-  ProjectionData2D     : simulate the polychromatic sinogram; save spectrum/mu .npy for ISP2D.
-  Reconstruct2D        : ASTRA FBP from a 2-D sinogram.
-  CorrectProjection    : detach / move-to-CPU helper.
-  SpectralProjection2D : differentiable polychromatic forward model (ISP2D).
-"""
-
 import os
 
 import numpy as np
@@ -66,10 +58,7 @@ class ProjectionData2D(Block):
         """Return the polychromatic attenuation sinogram -log(I/I0), (n_angles, size)."""
         r = sp.Spek(kvp=self.kvp, th=self.th, dk=self.dk, physics=self.physics)
 
-        # Optional tube filtration. Without it spekpy keeps a large <20 keV soft tail
-        # (~25% of fluence at dk=2) where mu is enormous; those photons are absorbed in
-        # the object (no effect on the sinogram) but dominate the fluence-weighted mu_eff
-        # (Al 1.6 -> 53 cm^-1). A few mm of Al removes the tail and restores a sane mu_eff.
+        # Optional tube filtration
         if self.al_filter_mm > 0:
             r.filter("Al", self.al_filter_mm)
 
@@ -150,7 +139,7 @@ class SpectralProjection2D(Block, ISP2D):
     Differentiable 2-D polychromatic forward model (Block + ISP2D).
     Learnable params: I (fluence), mu (attenuation), t (Otsu thresholds, added on first
     forward); gamma frozen. freeze_spectral=True registers I/mu non-trainable -> learn
-    only t (the honest test).
+    only t.
     """
 
     def __init__(
