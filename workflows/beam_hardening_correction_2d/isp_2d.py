@@ -273,7 +273,7 @@ class ISP2D(torch.nn.Module):
         x_norm = (x - x_min) / (x_max - x_min).clamp_min(1e-8)
 
         if not self._t_initialized:
-            # Initialise thresholds from multi-Otsu of the *normalised* recon, so
+            # Initialise thresholds from multi-Otsu of the normalised recon, so
             # the learnable thresholds live in the same [0,1] space as x_norm.
             thresholds = threshold_multiotsu(
                 x_norm.cpu().detach().numpy(),
