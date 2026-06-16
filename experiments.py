@@ -70,7 +70,7 @@ def _run2d(dk, noise=0.0, seed=0, smooth=0.0, fig_path=None):
     wf = BeamHardeningCorrectionWorkflow2D(
         optim_steps=300, lr=0.001, dk=dk, add_gaussian_noise=noise, noise_seed=seed,
         freeze_spectral=False, mu_eff_mode="lstsq", correction_mode="residual",
-        spectral_perturb=0.0, smooth_sigma=smooth)
+        spectral_perturb=1.0, smooth_sigma=smooth)   # +/-100% init perturbation 
     orig, final, hist = wf.run()
     phantom = render_phantom_2d(show=False)
     if fig_path:
@@ -112,7 +112,7 @@ def _run3d(dk, noise=0.0, seed=0, smooth=0.0, steps=300, html_path=None):
     from plot_3d_interactive import _metrics, build_html
     wf = BeamHardeningCorrectionWorkflow(
         optim_steps=steps, dk=dk, mu_eff_mode="lstsq", correction_mode="residual",
-        spectral_perturb=0.0, add_gaussian_noise=noise, noise_seed=seed, smooth_sigma=smooth)
+        spectral_perturb=1.0, add_gaussian_noise=noise, noise_seed=seed, smooth_sigma=smooth)   # +/-100% init perturbation
     orig, final, hist = wf.run()
     phantom = render_phantom(show_3d=False, show_projection=False)
     if html_path:
