@@ -36,11 +36,9 @@ class ISP(torch.nn.Module):
         self._I = torch.nn.Parameter(torch.from_numpy(np.array(fluence_vals)).float(), requires_grad=True) # (energy_bins,) - spectral photon fluence
         self._mu = torch.nn.Parameter(torch.from_numpy(mu_vals).float(), requires_grad=True) # (number_of_materials, energy_bins)
 
-        # Optionally perturb the spectral init AWAY from ground truth (per-bin
-        # multiplicative 1 +/- spectral_perturb). ISP loads I/mu from the exact spectrum
-        # that generated the data (inverse crime), so the optimisation otherwise STARTS
-        # at truth and "loss goes down" proves nothing. A nonzero perturb makes spectrum
-        # recovery an honest test. Mirrors 2-D ISP2D (see isp_2d.py). Off by default.
+        # Optionally perturb the spectral init AWAY from ground truth. ISP loads I/mu from the exact spectrum
+        # that generated the data, so the optimisation otherwise STARTS
+        # at truth and "loss goes down" proves nothing. Mirrors 2-D ISP2D (see isp_2d.py). Off by default.
         if spectral_perturb > 0:
             g = torch.Generator().manual_seed(spectral_perturb_seed)
             I_fac  = 1.0 + spectral_perturb * (2.0 * torch.rand(self._I.shape,  generator=g) - 1.0)
@@ -145,7 +143,6 @@ class ISP(torch.nn.Module):
             return y_mono
 
     def compute_monochromatic_sinogram(self, reconstruction):
-        """Backward-compatible alias: the 'replace' correction (returns y_mono)."""
         return self.compute_corrected_sinogram(reconstruction, correction_mode="replace")
 
     def _effective_mu(self, mu, I, As_n, y_poly=None):
@@ -217,7 +214,7 @@ class ISP(torch.nn.Module):
         x_norm = (x - x_min) / (x_max - x_min).clamp_min(1e-8)
 
         if not self._t_initialized:
-            # Otsu on the *normalised* recon, so learnable thresholds live in [0,1] too.
+            # Otsu on the normalised recon, so learnable thresholds live in [0,1] too.
             thresholds = threshold_multiotsu(x_norm.cpu().detach().numpy(),
                                              classes=self.number_of_materials + 1,
                                              nbins=128)
