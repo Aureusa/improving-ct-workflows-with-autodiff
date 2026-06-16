@@ -17,11 +17,11 @@ class BeamHardeningCorrectionWorkflow2D(Workflow):
     Key parameters:
       dk                 : spectrum bin width [keV]; smaller -> more bins -> stronger hardening
       add_gaussian_noise : fractional Gaussian noise on the sinogram (0 = clean); noise_seed for repro
-      freeze_spectral    : hold I/mu at ground truth, learn only t (honest test)
+      freeze_spectral    : hold I/mu at ground truth, learn only t 
       al_filter_mm       : added Al filtration [mm]; removes the soft tail that inflates mu_eff
-      mu_eff_mode        : 'fluence' | 'lstsq'  (see ISP2D._effective_mu)
-      correction_mode    : 'replace' (synthetic mono sinogram) | 'residual' (keeps real detail)
-      spectral_perturb   : perturb I/mu init off ground truth (per-bin +/-); honest recovery test
+      mu_eff_mode        : 'fluence' | 'lstsq'  
+      correction_mode    : 'replace' | 'residual' 
+      spectral_perturb   : perturb I/mu init off ground truth (per-bin +/-)
       smooth_sigma       : Gaussian sigma [px] to denoise recon before segmentation (0 = off)
     Plus optim_steps, lr, n_angles, number_of_materials, gamma, size, scale, device.
     """
@@ -50,7 +50,7 @@ class BeamHardeningCorrectionWorkflow2D(Workflow):
         super().__init__()
 
         # 1. Simulate the polychromatic sinogram and save spectrum/mu npy files
-        #    *before* SpectralProjection2D.__init__ loads them.
+        #    before SpectralProjection2D.__init__ loads them.
         self.add_block(ProjectionData2D(
             size=size,
             scale=scale,
