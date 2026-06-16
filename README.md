@@ -71,7 +71,7 @@ results/                ← experiment outputs (2-D PNGs, 3-D HTMLs, metric JSON
 
 ---
 
-## 3. Setup
+## 3. Setup - Tested on Python 3.11.15
 
 Requires an **NVIDIA GPU** (reconstruction uses ASTRA-CUDA).
 
